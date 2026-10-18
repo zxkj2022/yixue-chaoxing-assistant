@@ -6,7 +6,7 @@
 // @description:zh-TW  易學·超星學習通助手：提供超星學習通頁面輔助、進度管理與題庫查詢結果展示；答案僅供學習核對，請人工確認後提交。
 // @description:en     Yixue Chaoxing Learning Assistant: page assistance, progress management, and question-bank result display; verify answers manually before submission.
 // @namespace    易学团队
-// @version      3.3.1
+// @version      3.3.2
 // @homepageURL  https://github.com/zxkj2022/yixue-chaoxing-assistant
 // @updateURL    https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
 // @downloadURL  https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
@@ -14,7 +14,7 @@
 // @run-at       document-end
 // @storageName  易学团队
 // @match        *://*/*
-// @icon         https://tk.sanzwk.com/favicon.ico
+// @icon         https://yixue-cmg.pages.dev/assets/yixue-logo.png
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
