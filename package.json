@@ -1,0 +1,11 @@
+{
+  "name": "yixue-chaoxing-assistant",
+  "version": "3.3.1",
+  "private": true,
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "test": "node --test tests/question-bank.test.cjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include **/artifacts/question-bank-client.cjs --test-coverage-lines 80 --test-coverage-branches 80 --test-coverage-functions 80 tests/question-bank.test.cjs",
+    "build": "node scripts/build.cjs"
+  }
+}
