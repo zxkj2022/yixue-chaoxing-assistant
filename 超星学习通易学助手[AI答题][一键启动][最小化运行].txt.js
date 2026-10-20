@@ -6,7 +6,7 @@
 // @description:zh-TW  易學·超星學習通助手：提供超星學習通頁面輔助、進度管理與題庫查詢結果展示；答案僅供學習核對，請人工確認後提交。
 // @description:en     Yixue Chaoxing Learning Assistant: page assistance, progress management, and question-bank result display; verify answers manually before submission.
 // @namespace    易学团队
-// @version      3.3.2
+// @version      3.3.3
 // @homepageURL  https://github.com/zxkj2022/yixue-chaoxing-assistant
 // @updateURL    https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
 // @downloadURL  https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
@@ -313,22 +313,51 @@
         };
     }
     // END QUESTION BANK CLIENT
+    // BEGIN COURSE ACCESS
+    function createCourseAccess({ questionBank, getValue, setValue, randomValues = bytes => crypto.getRandomValues(bytes) }) {
+        const getLocalToken = () => {
+            const value = getValue('yixueLocalToken', '');
+            return typeof value === 'string' && value.length === 32 && /^[a-f0-9]{32}$/.test(value) ? value : '';
+        };
+        const getRealToken = () => { const value = questionBank.getToken(); return questionBank.isValidToken(value) ? value : ''; };
+        const getDisplayToken = () => getRealToken() || getLocalToken();
+        const createLocalToken = () => {
+            const token = Array.from(randomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+            setValue('yixueLocalToken', token);
+            return token;
+        };
+        const saveToken = value => {
+            const token = String(value ?? '').trim();
+            if (questionBank.isValidToken(token)) { questionBank.setToken(token); return token; }
+            if (token && token === getLocalToken() && !getRealToken()) return token;
+            throw new Error('请填写题库提供的 Token；本地随机 Token 不能用于查题。');
+        };
+        return { getLocalToken, getDisplayToken, createLocalToken, saveToken, hasAccess: () => Boolean(getDisplayToken()) };
+    }
+    // END COURSE ACCESS
     const escapeText = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
     const plainText = value => { const template = document.createElement('template'); template.innerHTML = String(value ?? '').replace(/<(?:br|\/p|\/div|\/li)\b[^>]*>/gi, ' '); template.content.querySelectorAll('script,style').forEach(node => node.remove()); return (template.content.textContent || '').replace(/\s+/g, ' '); };
     const questionBank = createQuestionBankClient({ request: details => GM_xmlhttpRequest(details), getValue: GM_getValue, setValue: GM_setValue, toText: plainText });
+    const courseAccess = createCourseAccess({ questionBank, getValue: GM_getValue, setValue: GM_setValue });
     const renderAccountBalance = () => {
-        const label = questionBank.balanceLabel();
+        const connected = Boolean(questionBank.getToken());
+        const label = connected ? questionBank.balanceLabel() : '未连接题库，答题前请填写题库 Token。';
         const state = questionBank.balanceState();
+        for (const element of document.querySelectorAll('.yixue-connection-status')) {
+            element.dataset.connected = String(connected);
+            element.textContent = connected ? '已连接题库' : '本地模式';
+        }
         for (const element of document.querySelectorAll('[data-yixue-balance]')) element.textContent = label;
         for (const button of document.querySelectorAll('[data-yixue-balance-refresh]')) button.disabled = state.loading;
         for (const element of document.querySelectorAll('[data-yixue-usage]')) element.textContent = questionBank.usageLabel();
         for (const id of ['ugyvciuu', 'tokenLeft']) {
             const input = document.getElementById(id);
             if (!input) continue;
-            input.value = state.data ? `积分：${state.data.points}` : state.error ? '额度查询失败' : '正在获取额度';
+            input.value = !connected ? '未连接题库' : state.data ? `积分：${state.data.points}` : state.error ? '额度查询失败' : '正在获取额度';
             input.title = label;
-            let detail = input.parentElement.querySelector('[data-yixue-balance]');
-            if (!detail) { detail = document.createElement('small'); detail.dataset.yixueBalance = ''; detail.style.cssText = 'display:block;white-space:normal;line-height:1.6;margin-top:6px'; input.parentElement.append(detail); }
+            const container = input.closest('.form-group') || input.parentElement.parentElement;
+            let detail = container.querySelector('[data-yixue-balance]');
+            if (!detail) { detail = document.createElement('small'); detail.dataset.yixueBalance = ''; detail.style.cssText = 'display:block;white-space:normal;line-height:1.6;margin-top:6px'; container.append(detail); }
             detail.textContent = label;
         }
     };
@@ -341,21 +370,63 @@
             overlay.style.cssText = 'position:fixed;inset:0;background:#0009;z-index:2147483647;display:flex;align-items:center;justify-content:center';
             const form = document.createElement('form');
             form.style.cssText = 'background:white;color:#222;padding:24px;border-radius:12px;width:min(460px,90vw);font:16px/1.6 sans-serif';
-            const title = document.createElement('h3'); title.textContent = '设置新版题库 Token';
-            const info = document.createElement('p'); info.textContent = '在题库网站登录，进入「接口接入」创建并复制 tk_ 开头的 API Token。旧版随机 Token 已不再适用。';
-            const link = document.createElement('a'); link.href = questionBank.base(); link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '打开当前题库网站';
+            form.setAttribute('role', 'dialog'); form.setAttribute('aria-label', '手动填写 Token');
+            const title = document.createElement('h3'); title.textContent = '手动填写题库 Token';
+            const info = document.createElement('p'); info.textContent = '需要答题时，请填写题库网站提供的 Token。没有 Token 也可以先进入章节控制台。';
+            const link = document.createElement('a'); link.href = questionBank.base() + '/#integration'; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '连接题库，获取 Token';
             const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'off'; input.placeholder = 'tk_…'; input.required = true; input.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin:16px 0;padding:10px'; input.setAttribute('aria-label', '搜题 API Token');
             const error = document.createElement('p'); error.style.color = '#b42318';
             const save = document.createElement('button'); save.type = 'submit'; save.textContent = '保存 Token';
             const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消'; cancel.style.marginLeft = '12px';
             const finish = token => { overlay.remove(); tokenDialog = null; resolve(token); };
             cancel.onclick = () => finish('');
-            form.onsubmit = event => { event.preventDefault(); const token = input.value.trim(); try { questionBank.setToken(token); void questionBank.refreshBalance({ force: true }); finish(token); } catch (err) { error.textContent = err.message; } };
+            form.onsubmit = event => {
+                event.preventDefault();
+                const token = input.value.trim();
+                try {
+                    questionBank.setToken(token);
+                    for (const id of ['token', 'tokenInput']) {
+                        const field = document.getElementById(id);
+                        if (field) { field.value = token; field.type = 'password'; }
+                    }
+                    void questionBank.refreshBalance({ force: true });
+                    finish(token);
+                } catch (err) { error.textContent = err.message; }
+            };
             form.append(title, info, link, input, error, save, cancel); overlay.append(form); document.body.append(overlay); input.focus();
         });
         return tokenDialog;
     };
+    let courseAccessDialog;
+    const requestCourseAccess = () => {
+        if (courseAccess.hasAccess()) return Promise.resolve(courseAccess.getDisplayToken());
+        if (courseAccessDialog) return courseAccessDialog;
+        courseAccessDialog = new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:#0008;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+            const panel = document.createElement('section');
+            panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', '首次使用易学助手');
+            panel.style.cssText = 'background:#fff;color:#111;border-radius:12px;padding:28px;box-sizing:border-box;width:min(560px,100%);text-align:center;font:18px/1.7 sans-serif;box-shadow:0 16px 50px #0003';
+            const title = document.createElement('h2'); title.textContent = '易学·超星学习通助手'; title.style.cssText = 'font-size:28px;font-weight:500;margin:0 0 12px';
+            const info = document.createElement('p'); info.textContent = '首次使用请选择接入方式。随机 Token 仅保存在本机，不连接题库；可先进入章节控制台，需要答题时再连接题库。';
+            const buttons = document.createElement('div'); buttons.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:24px';
+            const makeButton = text => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.style.cssText = 'border:0;border-radius:5px;padding:12px 20px;background:#4caf50;color:#fff;cursor:pointer;font:inherit'; buttons.append(button); return button; };
+            const connect = makeButton('连接题库');
+            const random = makeButton('随机生成 Token');
+            const manual = makeButton('手动填写 Token');
+            const cancel = makeButton('取消'); cancel.style.background = '#b84b4b';
+            const finish = token => { overlay.remove(); courseAccessDialog = null; resolve(token); };
+            connect.onclick = () => { window.open(questionBank.base() + '/#integration', '_blank', 'noopener,noreferrer'); info.textContent = '登录题库网站并获取 Token 后，点击「手动填写 Token」粘贴保存。也可随机生成本地 Token，先使用视频和文档功能。'; };
+            random.onclick = () => finish(courseAccess.createLocalToken());
+            manual.onclick = async () => { const token = await requestApiToken(); if (token) finish(token); };
+            cancel.onclick = () => finish('');
+            panel.append(title, info, buttons); overlay.append(panel); document.body.append(overlay);
+            random.focus();
+        });
+        return courseAccessDialog;
+    };
     const queryQuestion = async input => {
+        if (!questionBank.getToken()) return { code: 0, msg: '题库未连接，已跳过答题。请先填写题库 Token。' };
         const result = await questionBank.search(input);
         renderAccountBalance();
         void questionBank.refreshBalance({ force: true });
@@ -990,7 +1061,8 @@
             alert.appendChild(alertHead)
             alert.appendChild(alertBody)
             const buttons = $d.createElement('div');
-            const button = $d.createElement('span');
+            const button = $d.createElement('button');
+            button.type = 'button';
             buttons.classList.add('buttons');
             button.classList.add('button');
             button.innerHTML = '确定';
@@ -1292,7 +1364,7 @@
                 if (link) { link.href = questionBank.base(); link.rel = 'noopener noreferrer'; }
             }
         },
-        ctk = () => { refreshQueryUsage(); return questionBank.refreshBalance({ force: true }); },
+        ctk = () => { refreshQueryUsage(); return questionBank.getToken() ? questionBank.refreshBalance({ force: true }) : Promise.resolve(questionBank.balanceState()); },
         // 检查字符串是否为判断题答案
         panDuan = str => {
             const right = ['正确', '对', '是', 'T', '√', 'ri', 'true', 'A']
@@ -1464,12 +1536,16 @@
         },
         getTkToken = () => questionBank.getToken(),
         tokenGetter = requestApiToken,
-        hostCheck = async () => {
+        hostCheck = async ({ requireToken = true } = {}) => {
+            host = questionBank.base() + '/';
+            if (!requireToken) {
+                if (!courseAccess.hasAccess() && !await requestCourseAccess()) return false;
+                return host;
+            }
             if (!await questionBank.health()) {
                 alert('题库服务暂不可用，请检查题库地址、网络和脚本 @connect 权限后重试。');
                 return false;
             }
-            host = questionBank.base() + '/';
             if (!getTkToken() && !await tokenGetter()) return false;
             await questionBank.refreshBalance();
             return host;
@@ -1653,7 +1729,7 @@
             }, 1000)//如果检测到校园网，自动切换到旧版页面（新版没法用）
             setTimeout(e => {
                 const pagehead = $d.querySelector('.headRight')
-                if (!pagehead.innerHTML.includes('回到旧版')) {
+                if (pagehead && !pagehead.innerHTML.includes('回到旧版')) {
                     let a = $d.createElement('a')
                     a.setAttribute('href', 'javascript:;')
                     a.setAttribute('class', "backOld fl")
@@ -1674,9 +1750,22 @@
                 courseId = $s['courseid'] || $s['courseId'],
                 cpi = $s['cpi'] || '',
                 courseName = $d.title.replace('-首页', '')
-            return host + `/mooc-ans/course/999999999${$version}.html?ut=s&classid=` + classId + '&courseid=' + courseId + '&cpi=' + cpi + '&coursename=' + courseName + '&uid=' + $uid
+            const params = new URLSearchParams({ ut: 's', classid: classId || '', courseid: courseId || '', cpi, coursename: courseName, uid: $uid || '' });
+            return host + `/mooc-ans/course/999999999${$version}.html?` + params
         }
-        div.setAttribute("id", "skpannel")
+        div.setAttribute('id', 'yixue-course-options');
+        GM_addStyle(`
+            #yixue-course-options #skshadow { position:fixed !important; inset:0 !important; width:auto !important; height:auto !important; }
+            #yixue-course-options #skpannel { position:fixed !important; top:50% !important; left:50% !important; width:min(1040px,calc(100vw - 32px)) !important; max-height:calc(100vh - 32px); overflow:auto !important; box-sizing:border-box; }
+            #yixue-course-options .yixue-account-columns { gap:24px; flex-wrap:wrap; }
+            #yixue-course-options .yixue-account-columns > span { display:block; flex:1 1 300px; min-width:0; }
+            #yixue-course-options .yixue-account-row { gap:10px; flex-wrap:wrap; align-items:center; }
+            #yixue-course-options #token { box-sizing:border-box; flex:1 1 180px; min-width:0; }
+            #yixue-course-options #tokenLeft { box-sizing:border-box; width:140px !important; }
+            #yixue-course-options #saveToken, #yixue-course-options #payToken, #yixue-course-options #tokenTip { white-space:nowrap; flex-shrink:0; margin-left:0 !important; }
+            #yixue-course-options .yixue-course-actions { flex-wrap:wrap; gap:10px; }
+            #yixue-course-options .yixue-course-actions > * { margin:0 !important; white-space:nowrap; }
+        `);
         if (/Android/i.test(navigator.userAgent) && !/Edg/i.test(navigator.userAgent)) {
             let a = confirm('【易学·超星学习通助手】\n\n您可能正在使用手机浏览器\n我们不保证脚本能正常运行\n也不保证学习成绩\n建议使用edge手机端浏览器\n点击确定查看详细教程、点击取消关闭此窗口')
             if (a) {
@@ -1772,9 +1861,13 @@
                     id="canclesk">取消</span>
             </div>
         </div>`
-        hostCheck().then(server => {
+        const tokenRow = div.querySelector('#token').parentElement;
+        tokenRow.classList.add('yixue-account-row');
+        tokenRow.parentElement.parentElement.classList.add('yixue-account-columns');
+        div.querySelector('#tokenLeft').parentElement.classList.add('yixue-account-row');
+        div.querySelector('#dosk').parentElement.classList.add('yixue-course-actions');
+        hostCheck({ requireToken: false }).then(server => {
             if (!server) return;
-            setTimeout(() => {
                 const tempUIdElement = $d.querySelector("input[name='userId']") || $d.querySelector("input[id='uploadUid']")
                 if (tempUIdElement && !$uid) $uid = tempUIdElement.value
                 body.appendChild(div)
@@ -1797,16 +1890,16 @@
                     GM_setValue('jkdata', jkdata)
                 }
                 ctk(getTkToken())
-            }, 800)
-                let tkToken = getTkToken()
+                let tkToken = courseAccess.getDisplayToken()
                 $d.querySelector("#token").value = tkToken
-                const pannel = $d.querySelector('#skpannel')
+                $d.querySelector("#token").type = getTkToken() ? 'password' : 'text';
+                const pannel = div;
                 const tokentip = $d.querySelector('#tokentip')
                 $d.querySelector('#dosk').addEventListener('click', async () => {
                     pannel.style.display = 'none';
                     let jumpUrl
                     if (newVersion) {
-                        jumpUrl = entrance($w.ServerHost.mooc1Domain)
+                        jumpUrl = entrance($w.ServerHost?.mooc1Domain || $w.location.origin)
                     } else {
                         jumpUrl = entrance("https://" + $w.location.host)
                     }
@@ -1853,13 +1946,13 @@
                 })
                 $d.querySelector('#doHomework').addEventListener('click', async () => {
                     pannel.style.display = 'none';
-                    if (newVersion) $d.querySelector('.zy').click()
-                    else $d.querySelector('.workTip').previousSibling.click()
+                    if (newVersion) $d.querySelector('.zy')?.click()
+                    else $d.querySelector('.workTip')?.previousElementSibling?.click()
                 })
                 $d.querySelector('#doExam').addEventListener('click', async () => {
                     pannel.style.display = 'none';
-                    if (newVersion) $d.querySelector('.ks').click()
-                    else $d.querySelector('.testTip').previousSibling.click()
+                    if (newVersion) $d.querySelector('.ks')?.click()
+                    else $d.querySelector('.testTip')?.previousElementSibling?.click()
                 })
                 $d.querySelector('#doxxcs').addEventListener('click', async () => {
                     pannel.style.display = 'none';
@@ -1888,10 +1981,10 @@
                     }
                 })
                 $d.querySelector('#saveToken').addEventListener('click', () => {
-                    let stkToken = $d.querySelector('#token').value.trim(),
-                        reg = /^tk_[A-Za-z0-9_-]{32,128}$/
-                    if (!reg.test(stkToken)) {
-                        tokentip.innerHTML = `<p style="color:red;text-align:center;">token格式错误</p>`
+                    const stkToken = $d.querySelector('#token').value.trim();
+                    try { courseAccess.saveToken(stkToken); }
+                    catch (error) {
+                        tokentip.textContent = error.message;
                         tokentip.style.display = 'block'
                         setTimeout(e => {
                             tokentip.style.display = 'none'
@@ -1899,17 +1992,9 @@
                         $d.querySelector("#token").value = tkToken
                         return
                     }
-                    if (tkToken == stkToken) {
-                        tokentip.innerHTML = `<p style="color:red;text-align:center;">请在token输入框填写新token</p>`
-                        tokentip.style.display = 'block'
-                        setTimeout(e => {
-                            tokentip.style.display = 'none'
-                        }, 5000)
-                        return
-                    }
                     tkToken = stkToken
+                    $d.querySelector('#token').type = getTkToken() ? 'password' : 'text';
                     $w.localStorage.removeItem('shenchanranToken')
-                    questionBank.setToken(tkToken);
                     tokentip.innerHTML = `<p style="color:green;text-align:center;">保存成功</p>`
                     tokentip.style.display = 'block'
                     setTimeout(e => {
@@ -1917,7 +2002,7 @@
                     }, 2000)
                     ctk(tkToken)
                 })
-            }, 1000);
+            });
     }
     // 刷章节页面
     else if ($l.includes('.html?ut=s&classid') && $l.includes('/mooc-ans/course/') && !$l.includes('passport2')) {
@@ -1938,322 +2023,201 @@
         }
         async function main() {
             $d.querySelector('html').innerHTML = `
-            <!DOCTYPE html>
-<html lang="zh">
-
+<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>超星刷课工具</title>
-    <link rel="stylesheet" href="${host}assets/css/bootstrap.min-1.css" />
+    <title>易学 · 章节学习控制台</title>
+    <style id="yixue-dashboard-style">
+:root {
+    color-scheme: light;
+    --canvas: #f5f5f7;
+    --surface: #ffffff;
+    --ink: #1d1d1f;
+    --secondary: #737780;
+    --blue: #007aff;
+    --line: #e9eaf0;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { background: var(--canvas); color: var(--ink); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, a { -webkit-tap-highlight-color: transparent; }
+button, input { font: inherit; }
+button, a { touch-action: manipulation; }
+button { cursor: pointer; }
+a { color: var(--blue); text-decoration: none; }
+svg { display: block; flex-shrink: 0; }
+h1, h2, h5, p { margin: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #87baff; outline-offset: 3px; }
+.container-fluid { width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 30px 24px; }
+.yixue-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 4px 20px; }
+.yixue-brand { display: flex; align-items: center; gap: 11px; }
+.yixue-brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: #fff; background: var(--blue); box-shadow: 0 4px 10px #007aff20; font-size: 20px; font-weight: 650; }
+.yixue-brand-name { font-size: 15px; font-weight: 650; letter-spacing: .3px; }
+.yixue-brand-subtitle { display: block; color: var(--secondary); font-size: 11px; margin-top: -1px; }
+.yixue-connection-status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid #dedfe5; border-radius: 999px; background: #ffffffa6; font-size: 12px; font-weight: 550; color: #686c76; }
+.yixue-connection-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #999da8; }
+.yixue-connection-status[data-connected="true"] { background: #eefaf2; border-color: #d8efdf; color: #237440; }
+.yixue-connection-status[data-connected="true"]::before { background: #31a555; }
+.yixue-page-heading { padding: 0 4px 20px; }
+.yixue-eyebrow { font-size: 11px; letter-spacing: 1.5px; font-weight: 650; color: #8b8e99; margin-bottom: 6px; }
+#courseName { font-size: clamp(25px, 2.6vw, 34px); letter-spacing: -.8px; font-weight: 680; line-height: 1.35; }
+.yixue-page-subtitle { color: var(--secondary); font-size: 13px; margin-top: 8px; }
+#tra { height: 0; margin: 0; overflow: hidden; }
+.row, .form-row { display: flex; flex-wrap: wrap; margin: 0 -10px; }
+.col-12, .col-6, .col-md-6 { position: relative; width: 100%; padding: 0 10px; min-width: 0; }
+.col-12 { flex: 0 0 100%; max-width: 100%; }
+.col-6, .col-md-6 { flex: 0 0 50%; max-width: 50%; }
+.justify-content-center { justify-content: center; }
+.card { background: var(--surface); border: 1px solid #e6e7ec; border-radius: 22px; overflow: hidden; box-shadow: 0 3px 14px #1d274005; margin-bottom: 18px; }
+.card-body { padding: 22px; }
+.yixue-card-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.yixue-section-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--blue); background: #edf4ff; }
+.yixue-section-icon.violet { color: #7962cc; background: #f3efff; }
+.yixue-section-icon.green { color: #329264; background: #edf8f1; }
+.yixue-card-title { font-size: 16px; font-weight: 650; letter-spacing: -.2px; }
+.yixue-card-caption { margin-left: auto; font-size: 11px; color: #8c8f99; }
+.yixue-task-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.btn { border: 1px solid transparent; border-radius: 13px; min-height: 44px; padding: 10px 15px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: var(--ink); text-align: center; text-decoration: none; font: inherit; font-weight: 550; white-space: nowrap; transition: background .15s, border-color .15s, box-shadow .15s, transform .15s; }
+.btn:active { transform: scale(.98); }
+.btn-light { background: #f3f4f6; color: #696e79; }
+.btn-primary { background: #eaf3ff; color: #006cde; }
+.yixue-task-grid > .btn { width: 100%; justify-content: flex-start; gap: 9px; padding: 12px; min-height: 56px; background: #f7f8fa; border-color: #f0f1f4; color: #686e7b; font-size: 13px; }
+.yixue-task-grid > .btn-primary { background: #f2f7ff; border-color: #e0ebfc; color: #245d9c; }
+.yixue-task-grid > .btn > svg { opacity: .8; }
+.yixue-toggle-track { margin-left: auto; position: relative; flex-shrink: 0; width: 31px; height: 19px; border-radius: 20px; background: #d9dce3; transition: background .2s; }
+.yixue-toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; transition: transform .2s; }
+.btn-primary .yixue-toggle-track { background: var(--blue); }
+.btn-primary .yixue-toggle-track::after { transform: translateX(12px); }
+#doRenwu { grid-column: 1 / -1; }
+.yixue-quiz-options { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); margin-top: 17px; padding-top: 16px; }
+.yixue-inline-label { font-size: 12px; color: var(--secondary); margin-right: 3px; }
+.yixue-quiz-options .btn { border-radius: 999px; min-height: 36px; padding: 7px 12px; font-size: 12px; }
+.yixue-quiz-options .btn::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .65; }
+.yixue-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+.btn-success, #saveConfig { background: var(--blue); color: #fff; border-color: var(--blue); box-shadow: 0 3px 7px #007aff12; }
+.btn-success:hover, #saveConfig:hover { background: #0069df; }
+#start, #start_new, #abaaba { flex: 1 1 120px; }
+.btn-outline-primary { background: #f0f6ff; border-color: #e5edfb; color: #006de0; }
+.btn-outline-primary:hover { background: #e5efff; }
+.btn-outline-danger { background: #f3f4f7; color: #555d6b; border-color: #e9eaf0; }
+#wic { width: 100%; color: #858994; font-size: 11px; text-align: center; background: none; border: 0; padding: 3px; min-height: 26px; }
+.form-group { margin-bottom: 20px; }
+label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76; margin-bottom: 7px; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.form-inline .form-control { flex: 1 1 100px; min-width: 0; width: 100px; }
+.form-control { width: 100%; display: block; height: 44px; padding: 10px 12px; background: #f6f7f9; color: #3c4451; border: 1px solid #edeef2; border-radius: 11px; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; transition: background .15s, border-color .15s; }
+.form-control:focus { background: #fff; border-color: #8ebdff; outline: 3px solid #007aff10; }
+.form-control[readonly] { background: #f6f7f9; color: #757c88; }
+.form-text { display: block; margin-top: 7px; font-size: 11px; line-height: 1.7; }
+.text-muted, [data-yixue-balance] { color: #8b909b; }
+[data-yixue-balance] { font-size: 11px; line-height: 1.7 !important; }
+.floattipbox { flex: 1 1 130px; min-width: 0; position: relative; }
+.floattipbox .form-control { width: 100%; padding-right: 75px; }
+.floatTip { position: absolute; top: 0; bottom: auto; right: 10px; height: 44px; display: flex; align-items: center; font-size: 11px; font-weight: 550; color: #0780f6; cursor: pointer; white-space: nowrap; }
+#bindQQ, #payButton { min-height: 44px; padding: 10px 11px; font-size: 12px; border-radius: 11px; }
+.yixue-number-field { position: relative; }
+.yixue-number-field .form-control { padding-right: 35px; }
+.yixue-field-suffix { position: absolute; right: 13px; top: 10px; color: #9a9eaa; font-size: 12px; pointer-events: none; }
+.yixue-save-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
+#saveConfig { min-width: 96px; border-radius: 12px; font-size: 13px; }
+.yixue-save-hint { color: #8b909b; font-size: 11px; }
+.yixue-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 22px; }
+.yixue-stat { background: #f7f8fa; padding: 17px 18px; border: 1px solid #f0f1f4; border-radius: 15px; }
+.yixue-stat-label { display: block; color: #8a909b; font-size: 11px; margin-bottom: 4px; }
+.yixue-stat-value { font-size: 29px; line-height: 1.3; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.yixue-stat-value.accent { color: var(--blue); }
+.yixue-stat-unit { font-size: 11px; font-weight: 400; margin-left: 5px; color: #9b9fac; }
+.yixue-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: #6d7480; margin-bottom: 10px; }
+#yixueProgressValue { font-variant-numeric: tabular-nums; color: #0071ed; font-weight: 650; }
+.progress { display: flex; overflow: hidden; height: 8px; border-radius: 99px; background: #eff0f4; }
+.progress-bar { color: transparent; background: var(--blue); border-radius: 99px; transition: width .25s; min-width: 0 !important; font-size: 0; }
+.yixue-progress-note { margin-top: 10px; color: #989da7; font-size: 10px; }
+.yixue-live-label { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; background: #f3f8f5; color: #668270; border-radius: 99px; font-size: 10px; }
+.yixue-live-label::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #74a787; }
+#result { overflow-y: auto; height: 373px; scrollbar-width: thin; scrollbar-color: #d8dbe3 transparent; }
+#log { overflow-wrap: anywhere; font-size: 12px; line-height: 1.8; }
+#log > span { padding: 9px 1px; border-bottom: 1px solid #f0f1f4; }
+.yixue-log-body { padding-top: 0; }
+.yixue-player-card:has(#iframe_content:empty) { display: none; }
+#iframe_content { max-width: 100%; overflow: auto; }
+.yixue-footer { padding: 10px 0 0; text-align: center; color: #a3a7af; font-size: 10px; letter-spacing: .3px; }
+.yixue-dashboard .shadow { position: fixed; inset: 0; background: #20293755; backdrop-filter: blur(4px); z-index: 9998; }
+.yixue-dashboard .alert { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 36px)); overflow: hidden; background: #fff; border: 1px solid #ffffffb3; border-radius: 23px; box-shadow: 0 24px 80px #1a26342b; z-index: 9999; }
+.yixue-dashboard .alert .alertHead { padding: 21px 22px 0; font-size: 16px; font-weight: 650; }
+.yixue-dashboard .alert .alertBody { padding: 12px 22px 22px; color: #717784; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.yixue-dashboard .alert .buttons { border-top: 1px solid var(--line); text-align: center; }
+.yixue-dashboard .alert .button { display: block; padding: 13px; color: var(--blue); font-weight: 600; cursor: pointer; }
+@media (min-width: 1200px) { .yixue-task-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } #doRenwu { grid-column: span 2; } }
+@media (max-width: 900px) { .row > .col-6 { flex: 0 0 100%; max-width: 100%; } .container-fluid { max-width: 720px; padding: 22px 20px; } .yixue-page-heading { padding-bottom: 22px; } #result { height: 300px; } }
+@media (max-width: 560px) { .container-fluid { padding: 19px 16px; } .yixue-topbar { padding-bottom: 24px; } .yixue-brand-subtitle { display: none; } .yixue-connection-status { font-size: 10px; padding: 5px 9px; } .card { border-radius: 20px; margin-bottom: 14px; } .card-body { padding: 18px; } .yixue-card-caption { font-size: 10px; } .col-md-6 { flex: 0 0 100%; max-width: 100%; } .yixue-task-grid { gap: 8px; } .yixue-task-grid > .btn { padding: 10px; gap: 7px; font-size: 12px; } .yixue-task-grid > .btn > svg { width: 15px; } .yixue-stat { padding: 14px; } .yixue-page-subtitle { font-size: 12px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+
+    </style>
 </head>
-<style>
-    @font-face {
-        font-family: "阿里妈妈方圆体 VF Regular";
-        src: url("//at.alicdn.com/wf/webfont/bb6sz9d6E2UG/zkh0i2ziCDKY.woff2") format("woff2"),
-            url("//at.alicdn.com/wf/webfont/bb6sz9d6E2UG/tJ8Zk24AFUoT.woff") format("woff");
-        font-display: swap;
-    }
-
-    html,
-    body {
-        margin: 0;
-        padding: 0;
-    }
-
-    body {
-        position: relative;
-    }
-
-    .shadow {
-        position: absolute;
-        top: -20px;
-        left: 0;
-        width: 100%;
-        height: 110%;
-        background-color: #000;
-        opacity: 0.3;
-    }
-
-    .alert {
-        position: absolute;
-        top: 50vh;
-        left: 50vw;
-        transform: translate(-50%, -50%);
-        min-width: 260px;
-        max-width: 400px;
-        background-color: #fff;
-        border-radius: 2px;
-        box-shadow: 1px 1px 50px rgba(0, 0, 0, .3);
-        padding: 0;
-    }
-
-    .alert .alertHead {
-        padding: 0 80px 0 20px;
-        height: 42px;
-        line-height: 42px;
-        border-bottom: 1px solid #eee;
-        font-size: 14px;
-        color: #333;
-        overflow: hidden;
-        background-color: #F8F8F8;
-        border-radius: 2px 2px 0 0;
-    }
-
-    .alert .alertBody {
-        padding: 20px;
-        line-height: 24px;
-        word-break: break-all;
-        overflow: hidden;
-        font-size: 14px;
-        overflow-x: hidden;
-        overflow-y: auto;
-    }
-
-    .alert .buttons {
-        text-align: right;
-        padding: 0 15px 12px;
-        pointer-events: auto;
-        user-select: none;
-        -webkit-user-select: none;
-    }
-
-    .alert .buttons .button {
-        display: inline-block;
-        height: 28px;
-        line-height: 28px;
-        margin: 5px 5px 0;
-        padding: 0 15px;
-        border-radius: 2px;
-        border-color: #1E9FFF;
-        background-color: #1E9FFF;
-        color: #fff;
-        cursor: pointer;
-    }
-
-    .alert .buttons span:hover {
-        opacity: .9;
-        text-decoration: none;
-    }
-
-    #courseName {
-        font-weight: 900;
-        font-family: "阿里妈妈方圆体 VF Regular";
-        color: #409eff;
-        animation: bounce;
-        animation-duration: 2s;
-    }
-
-    .tit-margin {
-        margin: 15px 0px;
-    }
-
-    #courseName:hover {
-        color: #306fae;
-        animation: shakeX;
-        animation-duration: 2s;
-        cursor: pointer;
-        transition: .2s;
-    }
-
-    .title-weight {
-        font-weight: bold;
-    }
-
-    .btn {
-        border-radius: 11px;
-    }
-
-    .btn-outline-success:hover {
-        background-color: #b9dfa6;
-    }
-
-    .btn-outline-primary:hover {
-        background-color: #409eff;
-    }
-
-    .card {
-        border-radius: 4px;
-        background-color: #FFF;
-        overflow: hidden;
-        transition: .3s;
-    }
-
-    .card:hover {
-        transform: translateY(-1%);
-        box-shadow: 1px 1px 10px 2px #CCC;
-    }
-
-    .start {
-        margin-left: 11px;
-    }
-
-    .floatTip {
-        position: absolute;
-        right: 0;
-        transform: translateY(25%);
-        color: #1E9FFF;
-        cursor: pointer;
-        display: inline-block;
-    }
-
-    .floattipbox {
-        position: relative;
-    }
-
-    #wic {
-        color: #1E9FFF;
-        font-size: 12px;
-        font-weight: 400;
-        cursor: pointer;
-    }
-
-    #result {
-        overflow-y: auto;
-        height: 289px;
-    }
-
-    .info {
-        padding-bottom: 5px;
-    }
-
-    .title-weight {
-        margin-bottom: 0;
-    }
-
-    #tra {
-        height: 1px;
-        overflow: hidden;
-    }
-</style>
-
-<body translate="no">
+<body translate="no" class="yixue-dashboard">
     <div class="container-fluid">
-        <div class="row tit-margin">
-            <div class="col-12 text-center text-monospace">
-                <h1 id="courseName">课程名</h1>
-                <h5 id="tra">Trying to do the best</h5>
-            </div>
-        </div>
+        <header class="yixue-topbar">
+            <div class="yixue-brand"><span class="yixue-brand-mark" aria-hidden="true">易</span><div><span class="yixue-brand-name">易学助手</span><span class="yixue-brand-subtitle">学习通课程助手</span></div></div>
+            <span class="yixue-connection-status" data-connected="false">本地模式</span>
+        </header>
+        <div class="yixue-page-heading"><div class="yixue-eyebrow">章节学习控制台</div><h1 id="courseName">课程名</h1><p class="yixue-page-subtitle">设置学习任务，查看课程进度。准备好后，点击启动。</p><h5 id="tra">Trying to do the best</h5></div>
         <div class="row justify-content-center">
             <div class="col-6">
-                <div class="card" style="margin-top: 10px">
+                <section class="card">
                     <div class="card-body">
-                        <div>
-                            <div class="title-weight" style="padding: 0; font-size: 20px; float: left;">
-                                任务设置：
-                                <a id="doVideo" class="btn btn-light">视频任务</a>
-                                &#160;|&#160;
-                                <a id="doWork" class="btn btn-light">章节测试</a>&#160;
-                                <a id="AI" class="btn btn-light">AI答题</a>
-                                &#160;|&#160;
-                                <a id="doDocument" class="btn btn-light">文档任务</a>
-                                &#160;|&#160;
-                                <a id="doNoMission" class="btn btn-light">非任务点</a>
-                                &#160;|&#160;
-                                <a id="doRenwu" class="btn btn-light">任务引擎</a>
-                            </div>
-                            <br /><br /><br />
-                            <div class="title-weight" style="padding: 0; font-size: 20px; float: left">
-                                章节测试：<a id="autoSubmit" class="btn btn-light">自动提交</a>
-                                &nbsp;&nbsp;总开关：<a id="start" class="btn btn-success">点我启动</a>
-                                &#160;|&#160;<a id='start_new' class="btn btn-outline-danger">闯关模式</a>&#160;<a
-                                    id="wic">什么是闯关模式？</a>
-                            </div>
+                        <div class="yixue-card-heading"><span class="yixue-section-icon" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 5h10M9 12h10M9 19h10M4 5h.01M4 12h.01M4 19h.01"/></svg></span><h2 class="yixue-card-title">任务设置</h2><span class="yixue-card-caption">按需开启，随时调整</span></div>
+                        <div class="yixue-task-grid">
+                            <button type="button" id="doVideo" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/></svg>视频任务<span class="yixue-toggle-track" aria-hidden="true"></span></button>
+                            <button type="button" id="doDocument" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></svg>文档任务<span class="yixue-toggle-track" aria-hidden="true"></span></button>
+                            <button type="button" id="doWork" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="17" rx="3"/><path d="M9 3h6v4H9zM8 13l2 2 6-5"/></svg>章节测试<span class="yixue-toggle-track" aria-hidden="true"></span></button>
+                            <button type="button" id="doNoMission" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>非任务点<span class="yixue-toggle-track" aria-hidden="true"></span></button>
+                            <button type="button" id="doRenwu" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-8 12h6l-1 8 9-12h-6z"/></svg>任务引擎<span class="yixue-toggle-track" aria-hidden="true"></span></button>
                         </div>
+                        <div class="yixue-quiz-options"><span class="yixue-inline-label">章节答题</span><button type="button" id="autoSubmit" class="btn btn-light" aria-pressed="false">自动提交</button><button type="button" id="AI" class="btn btn-light" aria-pressed="false">AI答题</button></div>
+                        <div class="yixue-run-actions"><button type="button" id="start" class="btn btn-success"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.8c0-.7.8-1.1 1.4-.7l7.1 4.4a1.8 1.8 0 0 1 0 3L5.4 13.8c-.6.4-1.4 0-1.4-.7z"/></svg>点我启动</button><button type="button" id="start_new" class="btn btn-outline-danger">闯关模式</button><button type="button" id="wic">了解闯关模式</button></div>
                     </div>
-                </div>
-                <div class="card" style="margin-top: 10px">
+                </section>
+                <section class="card">
                     <div class="card-body">
-                        <h5 class="card-title title-weight">脚本配置</h5>
-                        <form style="margin-top: 25px;">
+                        <div class="yixue-card-heading"><span class="yixue-section-icon violet" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h6m4 0h6M4 17h10m4 0h2"/><circle cx="12" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></svg></span><h2 class="yixue-card-title">脚本配置</h2><span class="yixue-card-caption">保存后实时生效</span></div>
+                        <form>
                             <div class="form-row">
-                                <div class="form-group col-md-6">
-                                    <label for="exampleInputEmail1">题库Token</label>
-                                    <div class="form-inline">
-                                        <input type="password" autocomplete="off" class="form-control" id="tokenInput" value="" />&ensp;
-                                        <a class="btn btn-outline-primary" id="bindQQ" target="_blank">题库账户</a>
-                                    </div>
-                                    <small class="form-text text-muted">您需要填写题库token才能连接题库答题</small>
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label for="exampleInputPassword1">账户额度</label>
-                                    <div class="form-inline">
-                                        <span class="floattipbox">
-                                            <input type="text" class="form-control" id="ugyvciuu" readonly="readonly"
-                                                value="正在获取额度" /><span class="floatTip"
-                                                id="ciuuq">刷新额度</span></span>&ensp;
-                                        <a class="btn btn-outline-primary" id="payButton" target="_blank">充值</a>
-                                    </div>
-                                    <small class="form-text text-muted">查题成功一次扣除1次数</small>
-                                </div>
+                                <div class="form-group col-md-6"><label for="tokenInput">题库 Token</label><div class="form-inline"><input type="password" autocomplete="off" class="form-control" id="tokenInput" value="" /><a class="btn btn-outline-primary" id="bindQQ" target="_blank">连接题库</a></div><small class="form-text text-muted">答题前请填写题库提供的 Token</small></div>
+                                <div class="form-group col-md-6"><label for="ugyvciuu">账户额度</label><div class="form-inline"><span class="floattipbox"><input type="text" class="form-control" id="ugyvciuu" readonly="readonly" value="正在获取额度" /><span class="floatTip" id="ciuuq" role="button" tabindex="0">刷新额度</span></span><a class="btn btn-outline-primary" id="payButton" target="_blank">充值</a></div></div>
                             </div>
                             <div class="form-row">
-                                <div class="form-group col-md-6">
-                                    <label for="exampleInputPassword1">视频倍速</label>
-                                    <input type="number" class="form-control" id="beisuInput" />
-                                    <small class="form-text text-muted">倍速大于1倍会被清空进度，大于2倍可能无法完成任务</small>
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label for="exampleInputPassword1">最低正确率</label>
-                                    <input type="number" class="form-control" id="vgqtlv" />
-                                    <small class="form-text text-muted">当脚本作答后的正确率低于这个数值时不会自动提交</small>
-                                </div>
+                                <div class="form-group col-md-6"><label for="beisuInput">视频倍速</label><div class="yixue-number-field"><input type="number" min="0.5" max="16" step="0.25" class="form-control" id="beisuInput" /><span class="yixue-field-suffix">倍</span></div><small class="form-text text-muted">建议 1 倍；部分课程会限制倍速</small></div>
+                                <div class="form-group col-md-6"><label for="vgqtlv">最低正确率</label><div class="yixue-number-field"><input type="number" min="0" max="100" class="form-control" id="vgqtlv" /><span class="yixue-field-suffix">%</span></div><small class="form-text text-muted">低于此比例时，不自动提交章节测试</small></div>
                             </div>
-                            <a class="btn btn-outline-primary" id="saveConfig">保存</a>
-                            <small class="form-text text-muted">保存后会实时生效</small>
+                            <div class="yixue-save-row"><button type="button" class="btn btn-outline-primary" id="saveConfig">保存配置</button><span class="yixue-save-hint">当前页面立即应用</span></div>
                         </form>
                     </div>
-                </div>
+                </section>
             </div>
             <div class="col-6">
-                <div class="card" style="margin-top: 10px">
+                <section class="card">
                     <div class="card-body">
-                        <h5 class="card-title title-weight">任务</h5>
-                        <div class="panel-heading">
-                            任务数量&#8194;:&#8194;共有
-                            <span id="totalNum">-</span>章节，剩余<span id="leftNum">-</span>章节
-                        </div>
+                        <div class="yixue-card-heading"><span class="yixue-section-icon" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19V9M12 19V4M19 19v-7"/></svg></span><h2 class="yixue-card-title">学习进度</h2><span class="yixue-card-caption">课程概览</span></div>
+                        <div class="yixue-stats"><div class="yixue-stat"><span class="yixue-stat-label">全部章节</span><strong id="totalNum" class="yixue-stat-value">-</strong><span class="yixue-stat-unit">章</span></div><div class="yixue-stat"><span class="yixue-stat-label">剩余章节</span><strong id="leftNum" class="yixue-stat-value accent">-</strong><span class="yixue-stat-unit">章</span></div></div>
+                        <div class="yixue-progress-heading"><span>当前任务进度</span><span id="yixueProgressValue">0%</span></div><div class="progress"><div class="progress-bar" id="jdbar" role="progressbar" aria-label="当前任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><p class="yixue-progress-note">进度仅供参考，任务状态以下方日志为准。</p>
                     </div>
-                </div>
-                <div class="card" style="margin-top: 10px">
-                    <div class="card-body">
-                        <h5 class="card-title title-weight">当前任务进度（仅供参考，以下方日志为准）</h5>
-                        <div class="panel-heading">
-                            <div class="progress">
-                                <div class="progress-bar progress-bar-info" id="jdbar"
-                                    style="width: 0%; min-width: 1.5em;">0%
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card" style="margin-top: 10px">
-                    <div class="card-body info">
-                        <h5 class="card-title title-weight">任务日志</h5>
-                        <div id="result" style="overflow: auto; line-height: 30px">
-                            <div id="log">
-                                <span style="color: red">[00:00:00]如果此提示不消失，说明页面出现了错误，请反馈</span><br>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                </section>
+                <section class="card">
+                    <div class="card-body"><div class="yixue-card-heading"><span class="yixue-section-icon green" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h4"/></svg></span><h2 class="yixue-card-title">任务日志</h2><span class="yixue-card-caption yixue-live-label">实时记录</span></div></div>
+                    <div class="card-body yixue-log-body"><div id="result"><div id="log" role="log" aria-label="任务日志" aria-live="polite" aria-relevant="additions"><span style="color:#737780">正在初始化控制台…</span></div></div></div>
+                </section>
             </div>
-            <div class="col-6">
-                <div class="card" style="margin-top: 10px">
-                    <div class="card-body" id="iframe_content">
-                        
-                    </div>
-                </div>
-            </div>
+            <div class="col-12"><div class="card yixue-player-card"><div class="card-body" id="iframe_content"></div></div></div>
         </div>
+        <footer class="yixue-footer">易学助手 · 参考答案请人工核对</footer>
     </div>
-    <div id="detail" style="display: none"></div>
+    <div id="detail" style="display:none"></div>
 </body>
-
 </html>`;
             await sleep(100);
-            let tkToken = getTkToken()
+            let tkToken = courseAccess.getDisplayToken()
             ctk(tkToken)
             $w.logs = {
                 "addLog": function (str, color = "black") {
@@ -2264,7 +2228,7 @@
                         logElement = $d.querySelector('#log'),
                         resultElement = $d.querySelector('#result'),
                         span = $d.createElement('span')
-                    span.style.color = color
+                    span.style.color = ({ green: '#21804d', red: '#bd3e45', orange: '#946200', black: '#535b68', '#b7791f': '#946200' })[color] || color
                     span.style.display = "block"
                     span.innerHTML = `[${nowHour}:${nowMin}:${nowSec}] ${str}`
                     logElement.appendChild(span)
@@ -2275,7 +2239,7 @@
                 }
             };
             $w.chuangguan = false;
-            $d.getElementById('courseName').innerHTML = decodeURIComponent($s['coursename']);
+            $d.getElementById('courseName').textContent = $s['coursename'] || '章节学习控制台';
             if (/^((?!chrome|android).)*safari/i.test($w.navigator.userAgent)) {
                 $layer("<center>此脚本不支持Safari浏览器<br>请mac/ipad用户<a href='https://www.microsoft.com/zh-cn/edge/download'>安装Microsoft Edge浏览器</a></center>")
             }
@@ -2351,18 +2315,16 @@
                 GM_setValue('doNoMission', (() => { return s && ((() => { doNoMissionButton.setAttribute('class', 'btn btn-primary'); $w.logs.addLog('将会作答非任务点的章节测试（请刷新页面后继续）', 'green'); return true; })()) || ((() => { doNoMissionButton.setAttribute('class', 'btn btn-light'); $w.logs.addLog('将不会作答非任务点', 'red'); return false; })()) })());
             }
             saveConfigButton.onclick = function () {
-                let stkToken = $d.getElementById('tokenInput').value.trim(),
-                    reg = /^tk_[A-Za-z0-9_-]{32,128}$/,
-                    sbeisu = $d.getElementById('beisuInput').value,
-                    svgqtlv = $d.getElementById('vgqtlv').value;
-                if (!reg.test(stkToken)) {
-                    $layer('token格式不符');
-                    $d.getElementById('tokenInput').value = tkToken;
-                } else if (sbeisu < 0.5 || sbeisu > 16) {
+                const stkToken = $d.getElementById('tokenInput').value.trim(),
+                    sbeisu = Number($d.getElementById('beisuInput').value),
+                    svgqtlv = Number($d.getElementById('vgqtlv').value);
+                if (!Number.isFinite(sbeisu) || sbeisu < 0.5 || sbeisu > 16) {
                     $layer('倍速必须在0.5-16之间');
-                } else if (svgqtlv < 0 || svgqtlv > 100) {
+                } else if (!Number.isFinite(svgqtlv) || svgqtlv < 0 || svgqtlv > 100) {
                     $layer('正确率必须在0-100之间');
                 } else {
+                    try { if (stkToken) courseAccess.saveToken(stkToken); }
+                    catch (error) { $layer(escapeText(error.message)); return; }
                     beisu = sbeisu;
                     vgqtlv = svgqtlv
                     if (tkToken != stkToken) {
@@ -2371,8 +2333,9 @@
 
                     }
                     $layer('配置保存成功，已实时生效')
-                    tkToken = stkToken;
-                    questionBank.setToken(tkToken);
+                    tkToken = courseAccess.getDisplayToken();
+                    $d.getElementById('tokenInput').value = tkToken;
+                    $d.getElementById('tokenInput').type = getTkToken() ? 'password' : 'text';
                     $w.localStorage.removeItem('shenchanranToken')
                     ctk(tkToken)
                 }
@@ -2423,11 +2386,18 @@
             AIbutton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doAI', false) + 0]);
             doNoMissionButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doNoMission', 0) + 0]);
             renwuyinqingButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doRenwu', 0) + 0]);
+            const toggleButtons = [...$d.querySelectorAll('.yixue-task-grid button, .yixue-quiz-options button')];
+            const syncToggleState = button => button.setAttribute(button.getAttribute('role') === 'switch' ? 'aria-checked' : 'aria-pressed', String(button.classList.contains('btn-primary')));
+            const toggleObserver = new MutationObserver(records => records.forEach(record => syncToggleState(record.target)));
+            for (const button of toggleButtons) { syncToggleState(button); toggleObserver.observe(button, { attributes: true, attributeFilter: ['class'] }); }
+            ciuuqButton.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); ciuuqButton.click(); } };
             $d.getElementById('tokenInput').value = tkToken;
+            $d.getElementById('tokenInput').type = getTkToken() ? 'password' : 'text';
             $d.getElementById('beisuInput').value = beisu;
             $d.getElementById('vgqtlv').value = vgqtlv;
             $d.querySelector('#log').innerHTML = ''
             $w.logs.addLog('脚本初始化成功，点击启动按钮开始刷课', 'green');
+            if (!getTkToken()) $w.logs.addLog('本地随机 Token 未连接题库，视频、文档可先使用；章节答题将跳过，请填写题库 Token 后再启用。', '#b7791f');
         }
         async function start() {
             //如果用户给单个账号同时刷多门课（每个人都想这么做）就会被清空所有课程的进度，为了防止这种情况发生，添加检测，在刷视频时更新localstorage，触发其他页面的addEventListener
@@ -2457,9 +2427,11 @@
                 updateBar = (now) => {
                     try {
                         let bar = $d.getElementById("jdbar");
-                        now = now > 100 ? 100 : now;
+                        now = Math.max(0, Math.min(100, Number(now) || 0));
                         bar.setAttribute("style", "width: " + now + "%; min-width: 2em;");
                         bar.innerHTML = now + "%";
+                        bar.setAttribute('aria-valuenow', String(now));
+                        $d.getElementById('yixueProgressValue').textContent = now + '%';
                     } catch { }
                 }
             try {
@@ -2977,6 +2949,10 @@
                                             break;
                                         }
                                     case 'workid':
+                                        if (!getTkToken()) {
+                                            logs.addLog('题库未连接，跳过章节答题：' + escapeText(jobData.property.title || '章节测试'), '#b7791f');
+                                            break;
+                                        }
                                         if (!GM_getValue('doWork', true)) {
                                             logs.addLog('跳过任务：' + jobData.property.title, 'red');
                                             break;
@@ -3672,7 +3648,7 @@
                 }
             }
         }
-        hostCheck().then(server => {
+        hostCheck({ requireToken: false }).then(server => {
             if (!server) return;
             main()
         })
