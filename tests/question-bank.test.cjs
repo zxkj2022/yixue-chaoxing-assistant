@@ -1,17 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync, readdirSync, mkdirSync, writeFileSync } = require('node:fs');
+const { readFileSync, readdirSync } = require('node:fs');
 const path = require('node:path');
 
 const sourcePath = path.join(__dirname, '..', readdirSync(path.join(__dirname, '..')).find(name => name.endsWith('.txt.js')));
-const source = readFileSync(sourcePath, 'utf8');
-const clientBlock = source.split('// BEGIN QUESTION BANK CLIENT')[1]?.split('// END QUESTION BANK CLIENT')[0];
-assert.ok(clientBlock, 'userscript must include the versioned question-bank client');
-const artifactDirectory = path.join(__dirname, '..', 'artifacts');
-mkdirSync(artifactDirectory, { recursive: true });
-const clientPath = path.join(artifactDirectory, 'question-bank-client.cjs');
-writeFileSync(clientPath, clientBlock + '\nmodule.exports = createQuestionBankClient;\n');
-const factory = require(clientPath);
+const source = readFileSync(process.env.YIXUE_SCRIPT_PATH || sourcePath, 'utf8');
+const factory = require('../src/core/question-bank');
 function setup(responses = [], overrides = {}) {
     const storage = new Map();
     const requests = [];

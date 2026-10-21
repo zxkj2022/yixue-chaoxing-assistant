@@ -1,0 +1,21 @@
+.yixue-question-panel { position:fixed; top:18px; right:18px; z-index:2147483000; width:360px; max-width:calc(100vw - 20px); color:#202530; background:#fff; border:1px solid #e7ebf1; border-radius:22px; box-shadow:0 16px 60px #17263c24; overflow:hidden; font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+.yixue-question-panel *, .yixue-question-panel *::before, .yixue-question-panel *::after { box-sizing:border-box; }
+.yixue-question-header { display:flex; align-items:center; gap:9px; padding:13px 15px; background:#f9fafc; border-bottom:1px solid #edf0f4; cursor:grab; touch-action:none; user-select:none; }
+.yixue-question-panel.is-dragging .yixue-question-header { cursor:grabbing; }
+.yixue-question-header strong { font-size:14px; font-weight:650; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.yixue-question-mark, .yixue-question-mark img { display:block; width:28px; height:28px; object-fit:contain; border-radius:9px; }
+.yixue-panel-icon { display:grid; place-items:center; width:29px; height:29px; border:0; border-radius:50%; background:#edf0f5; color:#647082; font:20px/1 sans-serif; cursor:pointer; }
+.yixue-question-body { padding:15px; max-height:calc(100dvh - 86px); overflow:auto; }
+.yixue-question-body[hidden] { display:none; }
+.yixue-masked-token { display:block; margin-bottom:8px; font-size:11px; color:#8791a1; font-variant-numeric:tabular-nums; }
+.yixue-question-balance { min-height:54px; padding:11px 12px; border-radius:13px; background:#f5f8fc; color:#637083; font-size:11px; overflow-wrap:anywhere; }
+.yixue-question-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+.yixue-panel-button { flex:1 1 120px; min-height:37px; padding:8px 10px; border:1px solid #e6edf8; border-radius:11px; background:#edf4ff; color:#0873df; font:inherit; font-size:11px; font-weight:550; cursor:pointer; white-space:nowrap; }
+.yixue-panel-button:disabled { opacity:.5; cursor:wait; }
+.yixue-ai-toggle { background:#f4f5f7; border-color:#eceef2; color:#77818f; }
+.yixue-ai-toggle[aria-checked="true"] { color:#fff; background:#007aff; border-color:#007aff; }
+.yixue-question-panel button:focus-visible { outline:3px solid #88baff; outline-offset:2px; }
+.yixue-question-summary { color:#7d8795; font-size:11px; padding:13px 1px 9px; border-bottom:1px solid #edf0f4; }
+.yixue-question-log { max-height:min(300px,38vh); min-height:72px; overflow:auto; scrollbar-width:thin; font-size:12px; overflow-wrap:anywhere; }
+.yixue-question-log .yixue-log-line { padding:8px 0; border-bottom:1px solid #f0f2f6; }
+@media(max-width:560px) { .yixue-question-panel { top:10px; right:10px; } }

@@ -6,11 +6,11 @@ const { createHash } = require('node:crypto');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 const root = path.resolve(__dirname, '..');
-const source = readFileSync(path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
+const source = readFileSync(process.env.YIXUE_SCRIPT_PATH || path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
 const version = source.match(/^\/\/ @version\s+(\S+)/m)[1];
 const origin = 'https://mooc1.chaoxing.com';
 // Deliberately no UID cookie, uid query parameter, userId input, or ServerHost.
-const dashboardUrl = `${origin}/mooc-ans/course/999999999${version.replaceAll('.', '')}.html?ut=s&classid=202&courseid=101&cpi=303&coursename=Engine`;
+const dashboardUrl = `${origin}/mooc-ans/course/yixue-console.html?ut=s&classid=202&courseid=101&cpi=303&coursename=Engine`;
 let browser;
 
 before(async () => { browser = await chromium.launch({ channel: 'chrome', headless: true }); });
@@ -217,22 +217,22 @@ async function fixture(t, options = {}) {
     }, { version, origin, failure, format, scenario });
     await page.goto(dashboardUrl);
     await page.addScriptTag({ content: source });
-    await page.locator('#start').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('脚本初始化成功'));
+    await page.locator('#yixue-run-course').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#yixue-course-log')?.textContent.includes('脚本初始化成功'));
     return {
         page,
         state: () => page.evaluate(() => globalThis.engineFixture),
         reload: async () => {
             await page.reload();
             await page.addScriptTag({ content: source });
-            await page.locator('#start').waitFor({ state: 'visible' });
-            await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('脚本初始化成功'));
+            await page.locator('#yixue-run-course').waitFor({ state: 'visible' });
+            await page.waitForFunction(() => document.querySelector('#yixue-course-log')?.textContent.includes('脚本初始化成功'));
         },
     };
 }
 
 async function assertCompletedSequence(page, state, expectedTimes = ['0', '1']) {
-    await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('文档任务完成：后续文档'), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector('#yixue-course-log')?.textContent.includes('文档任务完成：后续文档'), null, { timeout: 15000 });
     const result = await state();
     const requests = result.requests.map(item => ({ ...item, parsed: new URL(item.url) }));
     const reports = requests.filter(item => item.parsed.pathname === '/multimedia/log/a/video-token');
@@ -261,29 +261,29 @@ async function assertCompletedSequence(page, state, expectedTimes = ['0', '1']) 
         const referer = new URL(card.headers.Referer);
         assert.equal(referer.searchParams.get('chapterId'), '505');
     }
-    assert.match(await page.locator('#log').innerText(), /视频任务完成：UID回退视频/);
+    assert.match(await page.locator('#yixue-course-log').innerText(), /视频任务完成：UID回退视频/);
 }
 
 test('video recovers UID from cards defaults and continues to the next document', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t);
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     await assertCompletedSequence(page, state);
     await completedLog(page);
-    assert.equal(await page.locator('#leftNum').innerText(), '0', 'a chapter with every task confirmed no longer remains unconfirmed');
+    assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '0', 'a chapter with every task confirmed no longer remains unconfirmed');
 });
 
 for (const failure of ['http', 'network', 'login']) {
     test(`catalog ${failure} failure is visible and retryable without uncaught exceptions`, { timeout: 25000 }, async t => {
         const { page, state } = await fixture(t, failure);
-        await page.locator('#log').evaluate(element => { element.textContent = ''; });
-        await page.locator('#start').click();
+        await page.locator('#yixue-course-log').evaluate(element => { element.textContent = ''; });
+        await page.locator('#yixue-run-course').click();
         await page.waitForFunction(() => {
-            const log = document.querySelector('#log')?.textContent || '';
+            const log = document.querySelector('#yixue-course-log')?.textContent || '';
             return /目录|章节/.test(log) && /失败|登录|重试/.test(log);
         });
         assert.equal(page.url(), dashboardUrl, 'failed catalog requests leave the user on the dashboard');
-        assert.doesNotMatch(await page.locator('#log').innerText(), /所有任务已完成/, 'a failure is never reported as successful completion');
-        const retry = page.locator('#start');
+        assert.doesNotMatch(await page.locator('#yixue-course-log').innerText(), /所有任务已完成/, 'a failure is never reported as successful completion');
+        const retry = page.locator('#yixue-run-course');
         await retry.waitFor({ state: 'visible' });
         assert.equal(await retry.isEnabled(), true, 'the normal start button can retry after failure');
         await retry.click();
@@ -295,20 +295,20 @@ for (const failure of ['http', 'network', 'login']) {
 for (const format of ['multiline-error', 'plain']) {
     test(`mArg ${format} JSON assignment runs video and document without executing page code`, { timeout: 25000 }, async t => {
         const { page, state } = await fixture(t, { format });
-        await page.locator('#start').click();
+        await page.locator('#yixue-run-course').click();
         await assertCompletedSequence(page, state);
         assert.equal((await state()).executed, false);
     });
 }
 
 async function completedLog(page) {
-    await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('任务遍历结束'), null, { timeout: 15000 });
-    return page.locator('#log').innerText();
+    await page.waitForFunction(() => document.querySelector('#yixue-course-log')?.textContent.includes('任务遍历结束'), null, { timeout: 15000 });
+    return page.locator('#yixue-course-log').innerText();
 }
 
 test('mArg whitespace no-task sentinel ends the chapter without a parsing failure', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { format: 'empty' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     assert.match(log, /已确认完成\s+0\s+项/);
     assert.doesNotMatch(log, /章节读取异常|无法获取章节内容|解析.*失败/);
@@ -318,7 +318,7 @@ test('mArg whitespace no-task sentinel ends the chapter without a parsing failur
 for (const format of ['invalid-json', 'invalid-shape']) {
     test(`mArg ${format} is rejected without evaluating data or claiming completion`, { timeout: 25000 }, async t => {
         const { page, state } = await fixture(t, { format });
-        await page.locator('#start').click();
+        await page.locator('#yixue-run-course').click();
         const log = await completedLog(page);
         const result = await state();
         assert.equal(result.executed, false, 'card data is parsed as JSON, never evaluated as JavaScript');
@@ -331,25 +331,25 @@ for (const format of ['invalid-json', 'invalid-shape']) {
 
 test('failed video heartbeat is retried with the same playingTime before advancing', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'report-retry' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     await assertCompletedSequence(page, state, ['0', '0', '1']);
 });
 
 test('video lacking server confirmation is failed while the following document completes', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'video-unconfirmed' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     assert.equal((await state()).reports, 2);
     assert.match(log, /文档任务完成：后续文档/);
     assert.match(log, /已确认完成\s+1\s+项/);
     assert.match(log, /失败\s+1\s+项/);
     assert.doesNotMatch(log, /所有任务已完成|视频任务完成：UID回退视频/);
-    assert.equal(await page.locator('#leftNum').innerText(), '1', 'a chapter with an unconfirmed video stays in the unconfirmed count');
+    assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '1', 'a chapter with an unconfirmed video stays in the unconfirmed count');
 });
 
 test('missing UID blocks video requests and counts a failure while documents can continue', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'missing-uid' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     const result = await state();
     assert.equal(result.requests.filter(item => new URL(item.url).pathname.startsWith('/ananas/status/')).length, 0);
@@ -381,7 +381,7 @@ test('doLive disabled skips live and chaoxingClass without network access and co
     await liveSwitch.click();
     await page.waitForFunction(() => document.querySelector('#doLive').getAttribute('aria-checked') === 'false');
     assert.equal(await page.evaluate(() => GM_getValue('doLive')), false);
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     const result = await state();
     assert.equal(result.requests.filter(item => !['/mycourse/studentstudycourselist', '/knowledge/cards', '/ananas/ueditor/ueditor.parse.js', '/ananas/job/document'].includes(new URL(item.url).pathname)).length, 0);
@@ -391,13 +391,13 @@ test('doLive disabled skips live and chaoxingClass without network access and co
     assert.match(log, /已确认完成\s+1\s+项/);
     assert.match(log, /跳过\s+2\s+项/);
     assert.match(log, /失败\s+0\s+项/);
-    assert.equal(await page.locator('#leftNum').innerText(), '1', 'skipped live tasks leave the chapter unconfirmed');
+    assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '1', 'skipped live tasks leave the chapter unconfirmed');
 });
 
 for (const scenario of ['class-success', 'class-failure']) {
     test(`chaoxingClass ${scenario} runs independently of video and leaves an accurate outcome`, { timeout: 25000 }, async t => {
         const { page, state } = await fixture(t, { scenario });
-        await page.locator('#start').click();
+        await page.locator('#yixue-run-course').click();
         const log = await completedLog(page);
         const result = await state();
         const requests = result.requests.map(item => new URL(item.url));
@@ -411,7 +411,7 @@ for (const scenario of ['class-success', 'class-failure']) {
         }
         assert.match(log, /文档任务完成：后续文档/);
         assert.match(log, /已确认完成\s+1\s+项/, 'only the document is confirmed, progress upload is not a passed task');
-        assert.equal(await page.locator('#leftNum').innerText(), '1', 'pending or failed replay tasks leave the chapter unconfirmed');
+        assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '1', 'pending or failed replay tasks leave the chapter unconfirmed');
         assert.doesNotMatch(log, /所有任务已完成|课堂直播任务完成/);
         if (scenario === 'class-success') {
             assert.deepEqual(uploads.map(url => url.searchParams.get('lastWatchTime')), ['10', '11']);
@@ -437,8 +437,8 @@ test('challenge enables all task switches in storage, classes, and accessibility
         await page.waitForFunction(key => document.getElementById(key).getAttribute('aria-checked') === 'false', key);
         assert.equal(await page.evaluate(key => GM_getValue(key), key), false);
     }
-    await page.locator('#start_new').click();
-    await page.waitForFunction(() => document.querySelector('#start').disabled === false);
+    await page.locator('#yixue-run-challenge').click();
+    await page.waitForFunction(() => document.querySelector('#yixue-run-course').disabled === false);
     for (const key of keys) {
         assert.equal(await page.evaluate(key => GM_getValue(key), key), true);
         assert.equal(await page.locator(`#${key}`).getAttribute('aria-checked'), 'true', key + ' reflects challenge auto-enablement');
@@ -453,7 +453,7 @@ test('challenge enables all task switches in storage, classes, and accessibility
 
 test('live viewer without watchMoment preserves its URL and failed initialization stops progress reports', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'live-viewer-failure' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     const requests = (await state()).requests.map(item => new URL(item.url));
     const viewers = requests.filter(url => url.origin === 'https://zhibo.chaoxing.com' && url.pathname === '/viewer');
@@ -470,10 +470,10 @@ test('live viewer without watchMoment preserves its URL and failed initializatio
 test('boundary lifecycle removes task listeners after a failed run and a retry', { timeout: 20000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'lifecycle', failure: 'network' });
     const initial = (await state()).activeListeners;
-    await page.locator('#start').click();
-    await page.waitForFunction(() => engineFixture.catalogs === 1 && !document.querySelector('#start').disabled);
-    await page.locator('#start').click();
-    await page.waitForFunction(() => engineFixture.catalogs === 2 && !document.querySelector('#start').disabled);
+    await page.locator('#yixue-run-course').click();
+    await page.waitForFunction(() => engineFixture.catalogs === 1 && !document.querySelector('#yixue-run-course').disabled);
+    await page.locator('#yixue-run-course').click();
+    await page.waitForFunction(() => engineFixture.catalogs === 2 && !document.querySelector('#yixue-run-course').disabled);
     await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: true });
         document.dispatchEvent(new Event('visibilitychange'));
@@ -486,27 +486,27 @@ test('boundary lifecycle removes task listeners after a failed run and a retry',
 
 test('boundary repeated empty card pages stop within a finite limit and restore start', { timeout: 15000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'empty-cards' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     const requests = (await state()).requests.filter(item => new URL(item.url).pathname === '/knowledge/cards');
     assert.ok(requests.length > 1 && requests.length <= 20, 'empty card pages stop before the fixture safety guard');
     assert.match(log, /章节读取异常|上限|空任务/);
     assert.match(log, /已确认完成\s+0\s+项/);
-    assert.equal(await page.locator('#start').isEnabled(), true);
+    assert.equal(await page.locator('#yixue-run-course').isEnabled(), true);
 });
 
 test('boundary non-job pagination has a finite cap and explains truncated results', { timeout: 15000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'non-job-pages' });
-    await page.locator('#start').click();
-    await page.waitForFunction(() => engineFixture.requests.some(item => item.url.includes('/stat2/chapter-exam/')) && !document.querySelector('#start').disabled, null, { timeout: 10000 });
+    await page.locator('#yixue-run-course').click();
+    await page.waitForFunction(() => engineFixture.requests.some(item => item.url.includes('/stat2/chapter-exam/')) && !document.querySelector('#yixue-run-course').disabled, null, { timeout: 10000 });
     const requests = (await state()).requests.filter(item => new URL(item.url).pathname === '/stat2/chapter-exam/s/tests/data');
     assert.ok(requests.length > 0 && requests.length <= 150, 'statistics pagination stops before the fixture safety guard');
-    assert.match(await page.locator('#log').innerText(), /上限|分页.*停止/);
+    assert.match(await page.locator('#yixue-course-log').innerText(), /上限|分页.*停止/);
 });
 
 test('boundary negative class replay position is clamped before reporting progress', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'class-negative-time' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     const uploads = (await state()).requests.map(item => new URL(item.url)).filter(url => url.pathname === '/apis/chapter/addReviewDot4Job');
     assert.deepEqual(uploads.map(url => url.searchParams.get('lastWatchTime')), ['10', '11']);
@@ -517,7 +517,7 @@ test('boundary negative class replay position is clamped before reporting progre
 for (const scenario of ['live-invalid-rt', 'live-invalid-duration', 'live-negative-viewtime']) {
     test(`boundary ${scenario} fails without progress reports and continues documents`, { timeout: 25000 }, async t => {
         const { page, state } = await fixture(t, { scenario });
-        await page.locator('#start').click();
+        await page.locator('#yixue-run-course').click();
         const log = await completedLog(page);
         const requests = (await state()).requests.map(item => new URL(item.url));
         assert.equal(requests.filter(url => /saveTimePc|put\/watchMoment/.test(url.pathname)).length, 0);
@@ -529,7 +529,7 @@ for (const scenario of ['live-invalid-rt', 'live-invalid-duration', 'live-negati
 
 test('boundary malformed attachments count failures and preserve the following document', { timeout: 25000 }, async t => {
     const { page, state } = await fixture(t, { scenario: 'invalid-attachments' });
-    await page.locator('#start').click();
+    await page.locator('#yixue-run-course').click();
     const log = await completedLog(page);
     assert.equal((await state()).reports, 0);
     assert.match(log, /文档任务完成：后续文档/);

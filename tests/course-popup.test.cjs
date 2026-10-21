@@ -5,7 +5,7 @@ const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 const root = path.resolve(__dirname, '..');
-const source = readFileSync(path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
+const source = readFileSync(process.env.YIXUE_SCRIPT_PATH || path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
 const version = source.match(/^\/\/ @version\s+(\S+)/m)[1];
 const artifacts = path.join(root, 'artifacts');
 const topCourseUrl = 'https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=101&clazzid=202';
@@ -25,7 +25,7 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function fixture(t, { local = localToken, topUrl = topCourseUrl, childUrl = childCourseUrl, width = 1440, height = 1000, child = true } = {}) {
+async function fixture(t, { local = localToken, topUrl = topCourseUrl, childUrl = childCourseUrl, width = 1440, height = 1000, child = true, balanceDelay = 0 } = {}) {
     const context = await browser.newContext({ viewport: { width, height } });
     context.setDefaultTimeout(3500);
     const page = await context.newPage();
@@ -90,6 +90,7 @@ async function fixture(t, { local = localToken, topUrl = topCourseUrl, childUrl 
         if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
         if (url.origin === bank && url.pathname === '/api/health') return json({ status: 'ok' });
         if (url.origin === bank && url.pathname === '/api/v1/balance') {
+            if (balanceDelay) await new Promise(resolve => setTimeout(resolve, balanceDelay));
             return json({ code: 'OK', cost: 0, data: { points: 42 + balanceResponses++, member: true, daily_remaining: 17, daily_limit: 100, member_until: 2000000000 } });
         }
         if (request.resourceType() === 'stylesheet' || request.resourceType() === 'font') return route.abort();
@@ -104,6 +105,52 @@ async function fixture(t, { local = localToken, topUrl = topCourseUrl, childUrl 
     return { page, childFrame, requests, inject: frame => frame.addScriptTag({ content: source }) };
 }
 
+test('escape-closes-course-dialog-while-refresh-button-is-disabled', { timeout: 15000 }, async t => {
+    const { page, inject } = await fixture(t, { child: false, balanceDelay: 500 });
+    await inject(page);
+    await page.locator('#yixue-entry-token').fill(realToken);
+    await page.locator('#yixue-entry-save').click();
+    await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('42'));
+    await page.waitForTimeout(1100);
+    await page.locator('#yixue-entry-refresh').click();
+    assert.equal(await page.locator('#yixue-entry-refresh').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#yixue-entry').count(), 0, 'global top-modal keyboard handling works after disabled refresh loses focus');
+    assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0);
+    await page.waitForTimeout(600);
+});
+
+test('account-retains-invalid-and-newer-token-drafts-during-async-updates', { timeout: 20000 }, async t => {
+    const { page, inject, requests } = await fixture(t, { child: false, balanceDelay: 500 });
+    await inject(page);
+    const input = page.locator('#yixue-entry-token');
+    const save = page.locator('#yixue-entry-save');
+    await input.fill('invalid-token-draft');
+    await save.click();
+    await page.getByText('请填写题库提供的 Token；本地随机 Token 不能用于查题。', { exact: true }).waitFor();
+    assert.equal(await input.inputValue(), 'invalid-token-draft', 'validation failures preserve the text for correction');
+    assert.equal(requests.some(item => new URL(item.url).origin === bank), false, 'invalid drafts never contact the bank');
+    await input.fill(realToken);
+    await save.click();
+    const newerDraft = 'tk_' + 'b'.repeat(43);
+    await input.fill(newerDraft);
+    await page.waitForFunction(() => !document.querySelector('#yixue-entry-save').disabled);
+    assert.equal(await input.inputValue(), newerDraft, 'finishing an earlier save does not overwrite a later edit');
+    assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken')), realToken, 'the saved credential is the value actually submitted');
+    await page.waitForTimeout(1100);
+    await page.locator('#yixue-entry-refresh').click();
+    await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('43'));
+    assert.equal(await input.inputValue(), newerDraft, 'balance refresh preserves unsaved edits');
+    await page.evaluate(() => { fixtureMenus['设置新版搜题 Token'](); });
+    const replacement = 'tk_' + 'c'.repeat(43);
+    const manual = page.getByRole('dialog', { name: '手动填写 Token', exact: true });
+    await manual.getByLabel('搜题 API Token').fill(replacement);
+    await manual.getByRole('button', { name: '保存 Token', exact: true }).click();
+    await manual.waitFor({ state: 'detached' });
+    assert.equal(await input.inputValue(), newerDraft, 'saving through another dialog preserves an existing entry draft');
+    assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken')), replacement);
+});
+
 async function visibleCount(page, selector) {
     const counts = await Promise.all(page.frames().map(frame => frame.locator(selector).evaluateAll(elements => elements.filter(element => {
         const box = element.getBoundingClientRect();
@@ -113,7 +160,7 @@ async function visibleCount(page, selector) {
     return counts.reduce((total, count) => total + count, 0);
 }
 
-async function assertSingleOwner(page, owner, selector = '#skpannel') {
+async function assertSingleOwner(page, owner, selector = '#yixue-entry') {
     await owner.locator(selector).waitFor({ state: 'visible' });
     // Allow the peer's injection and postMessage handshake to settle before
     // checking all documents; a first visible panel alone would miss duplicates.
@@ -133,12 +180,12 @@ for (const order of ['parent-first', 'child-first']) {
             await inject(page);
         }
         await assertSingleOwner(page, page);
-        assert.equal(await visibleCount(page, '#skshadow'), 1, 'there is only one course backdrop');
-        assert.equal(await childFrame.locator('#skpannel').count(), 0, 'cross-origin child defers to its course parent');
-        assert.equal(await page.locator('#token').inputValue(), localToken);
-        await page.locator('#canclesk').click();
-        assert.equal(await visibleCount(page, '#skpannel'), 0, 'cancel dismisses every visible panel');
-        assert.equal(await visibleCount(page, '#skshadow'), 0, 'cancel dismisses every visible backdrop');
+        assert.equal(await visibleCount(page, '#yixue-entry-layer'), 1, 'there is only one course backdrop');
+        assert.equal(await childFrame.locator('#yixue-entry').count(), 0, 'cross-origin child defers to its course parent');
+        assert.equal(await page.locator('#yixue-entry-token').inputValue(), localToken);
+        await page.locator('#yixue-entry-cancel').click();
+        assert.equal(await visibleCount(page, '#yixue-entry'), 0, 'cancel dismisses every visible panel');
+        assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0, 'cancel dismisses every visible backdrop');
         assert.equal(requests.some(request => new URL(request.url).origin === bank), false, 'local tokens do not contact the bank');
     });
 }
@@ -148,16 +195,16 @@ test('late-parent-removes-already-visible-child-course-popup', { timeout: 15000 
     await inject(childFrame);
     // Wait for the child's ownership fallback to render real UI before the
     // parent exists. Consecutive addScriptTag calls do not cover this race.
-    await childFrame.locator('#skpannel').waitFor({ state: 'visible' });
-    assert.equal(await childFrame.locator('#skshadow').isVisible(), true);
-    assert.equal(await page.locator('#skpannel').count(), 0);
+    await childFrame.locator('#yixue-entry').waitFor({ state: 'visible' });
+    assert.equal(await childFrame.locator('#yixue-entry-layer').isVisible(), true);
+    assert.equal(await page.locator('#yixue-entry').count(), 0);
     await inject(page);
     await assertSingleOwner(page, page);
-    assert.equal(await childFrame.locator('#yixue-course-options').count(), 0, 'the late parent removes the previous child root');
-    assert.equal(await childFrame.locator('#skshadow').count(), 0, 'the old child backdrop is removed from the DOM');
-    assert.equal(await visibleCount(page, '#skshadow'), 1);
-    await page.locator('#canclesk').click();
-    assert.equal(await visibleCount(page, '#skshadow'), 0);
+    assert.equal(await childFrame.locator('#yixue-entry').count(), 0, 'the late parent removes the previous child root');
+    assert.equal(await childFrame.locator('#yixue-entry-layer').count(), 0, 'the old child backdrop is removed from the DOM');
+    assert.equal(await visibleCount(page, '#yixue-entry-layer'), 1);
+    await page.locator('#yixue-entry-cancel').click();
+    assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0);
 });
 
 test('late-parent-removes-already-visible-child-first-use-prompt', { timeout: 15000 }, async t => {
@@ -171,19 +218,19 @@ test('late-parent-removes-already-visible-child-first-use-prompt', { timeout: 15
     assert.equal(await childFrame.locator('[data-yixue-course-ui]').count(), 0, 'the previous first-use overlay and backdrop are removed');
     await page.getByRole('button', { name: '随机生成 Token', exact: true }).click();
     await assertSingleOwner(page, page);
-    assert.equal(await childFrame.locator('#yixue-course-options').count(), 0, 'the cancelled child access promise cannot reopen a panel');
-    assert.equal(await visibleCount(page, '#skshadow'), 1);
+    assert.equal(await childFrame.locator('#yixue-entry').count(), 0, 'the cancelled child access promise cannot reopen a panel');
+    assert.equal(await visibleCount(page, '#yixue-entry-layer'), 1);
 });
 
 test('repeated-injection-in-one-document-is-idempotent', { timeout: 15000 }, async t => {
     const { page, inject } = await fixture(t, { child: false });
     await inject(page);
-    await page.locator('#dosk').waitFor({ state: 'visible' });
+    await page.locator('#yixue-open-course').waitFor({ state: 'visible' });
     await inject(page);
     await assertSingleOwner(page, page);
-    assert.equal(await page.locator('#yixue-course-options').count(), 1, 'a document cannot retain duplicate entrance roots');
-    await page.locator('#canclesk').click();
-    assert.equal(await visibleCount(page, '#skshadow'), 0, 'one cancel leaves no duplicate backdrop');
+    assert.equal(await page.locator('#yixue-entry').count(), 1, 'a document cannot retain duplicate entrance roots');
+    await page.locator('#yixue-entry-cancel').click();
+    assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0, 'one cancel leaves no duplicate backdrop');
 });
 
 test('first-use-prompt-has-one-owner-across-origins', { timeout: 15000 }, async t => {
@@ -195,7 +242,7 @@ test('first-use-prompt-has-one-owner-across-origins', { timeout: 15000 }, async 
     assert.equal(await childFrame.locator(selector).count(), 0, 'the child does not leave a first-use overlay behind');
     await page.getByRole('button', { name: '随机生成 Token', exact: true }).click();
     await assertSingleOwner(page, page);
-    assert.match(await page.locator('#token').inputValue(), /^[a-f0-9]{32}$/);
+    assert.match(await page.locator('#yixue-entry-token').inputValue(), /^[a-f0-9]{32}$/);
     assert.equal(await visibleCount(page, selector), 0, 'first-use prompt is removed after local generation');
 });
 
@@ -206,9 +253,9 @@ for (const origin of ['cross-origin', 'same-origin']) {
         await inject(page);
         await inject(childFrame);
         await assertSingleOwner(page, childFrame);
-        assert.equal(await page.locator('#skpannel').count(), 0, 'a non-course portal does not own the course panel');
-        await childFrame.locator('#canclesk').click();
-        assert.equal(await visibleCount(page, '#skshadow'), 0);
+        assert.equal(await page.locator('#yixue-entry').count(), 0, 'a non-course portal does not own the course panel');
+        await childFrame.locator('#yixue-entry-cancel').click();
+        assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0);
     });
 }
 
@@ -217,43 +264,43 @@ for (const width of [1440, 390]) {
         const { page, inject, requests } = await fixture(t, { width, height: width === 390 ? 844 : 1000, child: false });
         await inject(page);
         await assertSingleOwner(page, page);
-        const brand = page.locator('#skpannel .yx-course-mark img');
+        const brand = page.locator('#yixue-entry .yx-course-mark img');
         assert.equal(await brand.getAttribute('src'), logoUrl, 'the course entrance uses the requested logo');
         assert.equal(await brand.getAttribute('referrerpolicy'), 'no-referrer', 'logo requests do not disclose course URLs');
         await brand.evaluate(image => image.decode());
         assert.ok(await brand.evaluate(image => image.naturalWidth > 0), 'the fully offline logo fixture actually renders');
-        const panel = await page.locator('#skpannel').boundingBox();
+        const panel = await page.locator('#yixue-entry').boundingBox();
         assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 1, 'course panel stays within the viewport');
-        for (const id of ['token', 'saveToken', 'tokenLeft', 'tokenTip', 'payToken', 'dosk', 'doHomework', 'doExam', 'doxxcs', 'canclesk']) {
+        for (const id of ['yixue-entry-token', 'yixue-entry-save', 'yixue-entry-balance', 'yixue-entry-refresh', 'yixue-entry-connect', 'yixue-open-course', 'yixue-open-homework', 'yixue-open-exam', 'yixue-open-visits', 'yixue-entry-cancel']) {
             await page.locator(`#${id}`).scrollIntoViewIfNeeded();
             const box = await page.locator(`#${id}`).boundingBox();
             assert.ok(box && box.width > 0 && box.height > 0, `${id} remains visible`);
             assert.ok(box.x >= 0 && box.x + box.width <= width + 1, `${id} stays within the viewport`);
         }
-        await page.locator('#token').fill(realToken);
-        await page.locator('#saveToken').click();
-        await page.waitForFunction(() => document.querySelector('#tokenLeft')?.value.includes('42'));
+        await page.locator('#yixue-entry-token').fill(realToken);
+        await page.locator('#yixue-entry-save').click();
+        await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('42'));
         assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), realToken);
-        assert.equal(await page.locator('#token').getAttribute('type'), 'password');
+        assert.equal(await page.locator('#yixue-entry-token').getAttribute('type'), 'password');
         const balanceBefore = requests.filter(item => item.url.endsWith('/api/v1/balance')).length;
         // The API client intentionally coalesces forced refreshes for one
         // second. Exercise a real user refresh after that documented cooldown.
         await page.waitForTimeout(1100);
-        await page.locator('#tokenTip').click();
-        await page.waitForFunction(() => document.querySelector('#tokenLeft')?.value.includes('43'));
+        await page.locator('#yixue-entry-refresh').click();
+        await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('43'));
         assert.equal(requests.filter(item => item.url.endsWith('/api/v1/balance')).length, balanceBefore + 1, 'refresh actually fetches and displays the latest account data');
-        const hasScroll = await page.locator('#skpannel').evaluate(element => {
+        const hasScroll = await page.locator('#yixue-entry').evaluate(element => {
             element.scrollTop = 0;
             return element.scrollHeight > element.clientHeight;
         });
         await page.screenshot({ path: path.join(artifacts, `popup-entrance-${width}.png`), fullPage: true, animations: 'disabled' });
         if (hasScroll) {
-            await page.locator('#skpannel').evaluate(element => { element.scrollTop = element.scrollHeight; });
+            await page.locator('#yixue-entry').evaluate(element => { element.scrollTop = element.scrollHeight; });
             await page.screenshot({ path: path.join(artifacts, `popup-entrance-${width}-scrolled.png`), fullPage: true, animations: 'disabled' });
         }
         if (width === 1440) await page.keyboard.press('Escape');
-        else await page.locator('#canclesk').click();
-        assert.equal(await visibleCount(page, '#skshadow'), 0);
+        else await page.locator('#yixue-entry-cancel').click();
+        assert.equal(await visibleCount(page, '#yixue-entry-layer'), 0);
         assert.equal(requests.some(item => item.url.includes('/api/v1/search')), false, 'entrance operations never query questions');
     });
 }

@@ -1,18 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync, readdirSync, mkdirSync, writeFileSync } = require('node:fs');
-const path = require('node:path');
-
-const projectDirectory = path.join(__dirname, '..');
-const sourceName = readdirSync(projectDirectory).find(name => name.endsWith('.txt.js'));
-const source = readFileSync(path.join(projectDirectory, sourceName), 'utf8');
-const accessBlock = source.split('// BEGIN COURSE ACCESS')[1]?.split('// END COURSE ACCESS')[0];
-assert.ok(accessBlock, 'userscript must include the local course-access helper');
-const artifactDirectory = path.join(projectDirectory, 'artifacts');
-mkdirSync(artifactDirectory, { recursive: true });
-const helperPath = path.join(artifactDirectory, 'course-access.cjs');
-writeFileSync(helperPath, accessBlock + '\nmodule.exports = createCourseAccess;\n');
-const createCourseAccess = require(helperPath);
+const createCourseAccess = require('../src/core/access');
 
 const localToken = '00010f107f80abef020304050607feff';
 const realToken = 'tk_' + 'A'.repeat(43);

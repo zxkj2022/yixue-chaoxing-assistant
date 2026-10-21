@@ -1,0 +1,60 @@
+.yx-modal-layer { position:fixed; inset:0; z-index:2147483600; display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; background:#18213166; backdrop-filter:blur(8px); font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; color:#1d1d1f; }
+.yx-modal-layer *, .yx-modal-layer *::before, .yx-modal-layer *::after { box-sizing:border-box; }
+.yx-modal-backdrop { position:absolute; inset:0; }
+.yx-course-sheet { position:relative; width:min(900px,100%); max-height:calc(100dvh - 40px); overflow:auto; background:#fff; padding:28px; border:1px solid #ffffffb3; border-radius:26px; box-shadow:0 28px 90px #111a3038; }
+.yx-course-sheet.yx-compact { width:min(540px,100%); }
+.yx-course-heading { display:flex; align-items:center; gap:12px; margin-bottom:23px; }
+.yx-course-mark { display:grid; place-items:center; flex-shrink:0; width:42px; height:42px; border-radius:13px; background:#007aff; color:#fff; font-size:24px; font-weight:650; }
+.yx-course-mark:has(img) { background:transparent; }
+.yx-course-mark img { display:block; width:100%; height:100%; object-fit:contain; border-radius:inherit; }
+.yx-course-sheet h2 { font-family:inherit; font-weight:650; font-size:21px; line-height:1.35; margin:0; color:#1d1d1f; letter-spacing:-.5px; }
+.yx-course-subtitle { margin:4px 0 0; color:#737b88; font-size:12px; }
+.yx-close { display:grid; place-items:center; width:32px; height:32px; flex-shrink:0; margin-left:auto; border:0; border-radius:50%; background:#f0f1f4; color:#7c8390; font:22px/1 sans-serif; cursor:pointer; }
+.yx-account-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:23px; }
+.yx-account-field { min-width:0; padding:16px; border:1px solid #e9ecf2; border-radius:17px; background:#fafbfc; }
+.yx-account-label { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; color:#606977; font-size:12px; font-weight:550; }
+.yx-input-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.yx-course-sheet input { flex:1 1 120px; min-width:0; width:100%; height:44px; padding:10px 12px; border:1px solid #e0e5ed; border-radius:11px; background:#fff; color:#465161; outline:none; font-family:inherit; font-size:13px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.yx-course-sheet input:focus { border-color:#82b7ff; box-shadow:0 0 0 3px #007aff12; }
+.yx-course-sheet input[readonly] { background:#f1f3f6; color:#737c89; }
+.yx-course-sheet .yx-balance-line { display:flex; align-items:center; position:relative; }
+.yx-course-sheet .yx-balance-line input { padding-right:84px; }
+.yx-course-sheet .yx-balance-line .yx-refresh { position:absolute; right:12px; }
+.yx-course-sheet .yx-account-connect { margin-top:10px; }
+.yx-course-sheet .yx-error:empty { display:none; }
+.yx-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:10px 15px; flex-shrink:0; border:1px solid #e0ebfc; border-radius:11px; color:#006fe8; background:#edf4ff; text-decoration:none; white-space:nowrap; font:inherit; font-size:13px; font-weight:550; cursor:pointer; transition:background .15s,transform .15s; }
+.yx-button:hover { background:#e2edff; }
+.yx-button:active, .yx-action:active { transform:scale(.98); }
+.yx-button.yx-primary { border-color:#007aff; background:#007aff; color:#fff; }
+.yx-button.yx-quiet { background:#f1f2f5; color:#626c7b; border-color:#ebedf2; }
+.yx-refresh { border:0; padding:0; background:none; color:#007aff; font:inherit; font-size:11px; cursor:pointer; white-space:nowrap; }
+.yx-refresh:disabled { color:#9aa3b1; cursor:wait; }
+.yx-course-sheet [data-yixue-balance] { font-size:11px; line-height:1.7!important; margin-top:9px!important; color:#757f8d; }
+.yx-course-sheet .yixue-connection-status { display:inline-flex; align-items:center; gap:5px; border-radius:99px; padding:3px 8px; background:#eef0f4; color:#737c8c; font-size:10px; white-space:nowrap; }
+.yx-course-sheet .yixue-connection-status::before { content:""; width:5px; height:5px; background:#99a1ae; border-radius:50%; }
+.yx-course-sheet .yixue-connection-status[data-connected="true"] { color:#287246; background:#eaf7ee; }
+.yx-course-sheet .yixue-connection-status[data-connected="true"]::before { background:#39a160; }
+.yx-action-heading { margin:0 0 4px; font-size:15px; font-weight:650; }
+.yx-body-copy { margin:0 0 17px; font-size:12px; color:#737d8c; line-height:1.8; }
+.yx-action-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.yx-action { display:flex; flex-direction:column; align-items:flex-start; gap:5px; min-width:0; padding:17px 14px; border:1px solid #e9ecf2; border-radius:17px; background:#f6f8fb; text-align:left; color:#425166; font:inherit; cursor:pointer; transition:background .15s,transform .15s; }
+.yx-action:hover { background:#edf3fb; }
+.yx-action-main { color:#fff; border-color:#007aff; background:#007aff; }
+.yx-action-main:hover { background:#006ce6; }
+.yx-action-icon { display:grid; place-items:center; width:28px; height:28px; margin-bottom:5px; border:1px solid #dfe8f6; border-radius:9px; color:#0679f4; background:#fff; font-size:15px; }
+.yx-action-main .yx-action-icon { color:#fff; background:#ffffff26; border-color:#ffffff22; }
+.yx-action-title { font-size:15px; font-weight:600; white-space:nowrap; }
+.yx-action-description { font-size:10px; line-height:1.7; color:#828c9c; }
+.yx-action-main .yx-action-description { color:#ffffffcf; }
+.yx-entry-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:24px; padding-top:18px; border-top:1px solid #edf0f4; }
+.yx-entry-footer small { color:#818a98; font-size:11px; line-height:1.8; }
+.yx-choice-grid { display:grid; grid-template-columns:1fr; gap:11px; margin-top:20px; }
+.yx-choice { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 14px; border:1px solid #e9ecf3; border-radius:15px; background:#f8fafe; }
+.yx-choice .yx-button { flex:0 0 auto; min-width:145px; }
+.yx-choice small { color:#7c8797; font-size:11px; line-height:1.7; }
+.yx-course-sheet .yx-form-input { display:block; width:100%; margin:18px 0 12px; }
+.yx-error { color:#b73e47; font-size:12px; min-height:20px; margin:0 0 10px; }
+.yx-course-sheet button:focus-visible, .yx-course-sheet a:focus-visible { outline:3px solid #83b7ff; outline-offset:3px; }
+@media(max-width:640px) { .yx-modal-layer { padding:14px; } .yx-course-sheet { padding:21px; border-radius:23px; max-height:calc(100dvh - 28px); } .yx-course-sheet h2 { font-size:18px; } .yx-course-mark { width:36px; height:36px; font-size:21px; border-radius:11px; } .yx-course-heading { gap:10px; margin-bottom:19px; } .yx-account-grid { grid-template-columns:1fr; gap:11px; } .yx-account-field { padding:13px; } .yx-action-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .yx-entry-footer { align-items:flex-start; gap:12px; } .yx-choice { padding:12px; } .yx-choice .yx-button { min-width:130px; font-size:12px; } }
+@media(prefers-reduced-motion:reduce) { .yx-button, .yx-action { transition:none; } }
+        

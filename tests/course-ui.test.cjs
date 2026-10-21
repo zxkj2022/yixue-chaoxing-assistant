@@ -4,7 +4,7 @@ const { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } = requ
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const source = readFileSync(path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
+const source = readFileSync(process.env.YIXUE_SCRIPT_PATH || path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
 const version = source.match(/^\/\/ @version\s+(\S+)/m)[1];
 const artifacts = path.join(root, 'artifacts');
 const logoUrl = 'https://yixue-cmg.pages.dev/assets/yixue-logo.png';
@@ -14,7 +14,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const bank = 'https://tk.sanzwk.com';
 const courseOrigin = 'https://mooc1.chaoxing.com';
 const courseUrl = `${courseOrigin}/mycourse/stu?courseid=101&clazzid=202&cpi=303&uid=404`;
-const dashboardUrl = `${courseOrigin}/mooc-ans/course/999999999${version.replaceAll('.', '')}.html?ut=s&classid=202&courseid=101&cpi=303&coursename=${encodeURIComponent('课程界面回归测试')}&uid=404`;
+const dashboardUrl = `${courseOrigin}/mooc-ans/course/yixue-console.html?ut=s&classid=202&courseid=101&cpi=303&coursename=${encodeURIComponent('课程界面回归测试')}&uid=404`;
 const firstToken = 'tk_' + 'a'.repeat(40);
 const secondToken = 'tk_' + 'b'.repeat(40);
 const localToken = 'a1'.repeat(16);
@@ -41,7 +41,7 @@ async function fixture(t, { token = '', local = '', healthy = true, workTask = f
                 alerts: globalThis.fixtureAlerts || [], rejections: globalThis.fixtureRejections || [],
                 switches: [...document.querySelectorAll('[role="switch"]')].map(element => ({ id: element.id, className: element.className, checked: element.getAttribute('aria-checked') })),
                 connection: document.querySelector('.yixue-connection-status')?.dataset.connected,
-                progress: document.querySelector('#jdbar')?.getAttribute('aria-valuenow'),
+                progress: document.querySelector('#yixue-course-progress')?.getAttribute('aria-valuenow'),
             })).catch(() => ({}));
             errors.push(...(state.rejections || []));
             writeFileSync(path.join(artifacts, `course-${screenshotName}.json`), JSON.stringify({ version, requests, errors, alerts: state.alerts || [], switches: state.switches || [], connection: state.connection, progress: state.progress }, null, 2));
@@ -135,14 +135,14 @@ test('guest-course-entrance', { timeout: 20000 }, async t => {
     await page.getByText('手动填写 Token', { exact: true }).waitFor();
     await page.screenshot({ path: path.join(artifacts, 'course-first-use.png'), fullPage: true, animations: 'disabled' });
     await page.getByText('随机生成 Token', { exact: true }).click();
-    await page.locator('#dosk').waitFor({ state: 'visible' });
+    await page.locator('#yixue-open-course').waitFor({ state: 'visible' });
     const generatedToken = await page.evaluate(() => GM_getValue('yixueLocalToken', ''));
     assert.match(generatedToken, /^[a-f0-9]{32}$/);
-    assert.equal(await page.locator('#token').inputValue(), generatedToken);
-    assert.match(await page.locator('#tokenLeft').inputValue(), /未连接|未激活/);
+    assert.equal(await page.locator('#yixue-entry-token').inputValue(), generatedToken);
+    assert.match(await page.locator('#yixue-entry-balance').inputValue(), /未连接|未激活/);
     assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), '');
     await page.screenshot({ path: path.join(artifacts, 'course-task-selection.png'), fullPage: true, animations: 'disabled' });
-    for (const id of ['saveToken', 'payToken', 'tokenTip']) {
+    for (const id of ['yixue-entry-save', 'yixue-entry-connect', 'yixue-entry-refresh']) {
         const lines = await page.locator(`#${id}`).evaluate(element => {
             const range = document.createRange();
             range.selectNodeContents(element);
@@ -153,13 +153,13 @@ test('guest-course-entrance', { timeout: 20000 }, async t => {
     assert.ok((await page.locator('[data-yixue-balance]').first().boundingBox()).width >= 200, 'account details use a readable block rather than a narrow flex column');
     await page.reload();
     await page.addScriptTag({ content: source });
-    await page.locator('#dosk').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('#token').inputValue(), generatedToken);
+    await page.locator('#yixue-open-course').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#yixue-entry-token').inputValue(), generatedToken);
     assert.equal(await page.evaluate(() => GM_getValue('yixueLocalToken', '')), generatedToken);
     assert.equal(await page.getByText('随机生成 Token', { exact: true }).isVisible(), false);
     assert.deepEqual(await page.evaluate(() => globalThis.fixtureAlerts || []), []);
-    const navigation = page.waitForURL(url => url.pathname.startsWith('/mooc-ans/course/999999999'));
-    await page.locator('#dosk').click();
+    const navigation = page.waitForURL(url => url.pathname === '/mooc-ans/course/yixue-console.html');
+    await page.locator('#yixue-open-course').click();
     await navigation;
     const url = new URL(page.url());
     assert.equal(url.origin, courseOrigin);
@@ -179,6 +179,10 @@ test('first-run-manual-token-and-cancel', { timeout: 20000 }, async t => {
     const access = page.getByRole('dialog', { name: '首次使用易学助手', exact: true });
     await access.getByRole('button', { name: '手动填写 Token', exact: true }).click();
     const manual = page.getByRole('dialog', { name: '手动填写 Token', exact: true });
+    await manual.getByLabel('搜题 API Token').press('Shift+Tab');
+    assert.equal(await manual.evaluate(dialog => dialog.contains(document.activeElement)), true, 'backward Tab stays in the upper Token dialog');
+    await page.keyboard.press('Tab');
+    assert.equal(await manual.evaluate(dialog => dialog.contains(document.activeElement)), true, 'forward Tab stays in the upper Token dialog');
     await manual.getByLabel('搜题 API Token').press('Escape');
     await access.waitFor({ state: 'visible' });
     assert.equal(await access.count(), 1, 'Escape closes only the upper Token dialog, leaving the welcome dialog available');
@@ -189,9 +193,9 @@ test('first-run-manual-token-and-cancel', { timeout: 20000 }, async t => {
     await access.getByRole('button', { name: '手动填写 Token', exact: true }).click();
     await manual.getByLabel('搜题 API Token').fill(firstToken);
     await manual.getByRole('button', { name: '保存 Token', exact: true }).click();
-    await page.locator('#dosk').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#tokenLeft')?.value.includes('42'));
-    assert.equal(await page.locator('#token').inputValue(), firstToken);
+    await page.locator('#yixue-open-course').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('42'));
+    assert.equal(await page.locator('#yixue-entry-token').inputValue(), firstToken);
     assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), firstToken);
     assert.equal(await access.count(), 0);
     assert.equal(requests.filter(item => item.url.includes('/api/v1/search')).length, 0);
@@ -200,14 +204,14 @@ test('first-run-manual-token-and-cancel', { timeout: 20000 }, async t => {
 test('authenticated-course-token-and-balance', { timeout: 20000 }, async t => {
     const { page, requests, open } = await fixture(t, { token: firstToken });
     await open(courseUrl);
-    await page.locator('#dosk').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#tokenLeft')?.value.includes('42'));
-    await page.waitForFunction(token => document.querySelector('#token')?.value === token, firstToken);
-    assert.equal(await page.locator('#token').inputValue(), firstToken);
+    await page.locator('#yixue-open-course').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('42'));
+    await page.waitForFunction(token => document.querySelector('#yixue-entry-token')?.value === token, firstToken);
+    assert.equal(await page.locator('#yixue-entry-token').inputValue(), firstToken);
     assert.match(await page.locator('[data-yixue-balance]').first().innerText(), /17\/100/);
-    await page.locator('#token').fill(secondToken);
-    await page.locator('#saveToken').click();
-    await page.waitForFunction(() => document.querySelector('#tokenLeft')?.value.includes('57'));
+    await page.locator('#yixue-entry-token').fill(secondToken);
+    await page.locator('#yixue-entry-save').click();
+    await page.waitForFunction(() => document.querySelector('#yixue-entry-balance')?.value.includes('57'));
     assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), secondToken);
     assert.ok(requests.some(item => item.url.endsWith('/api/v1/balance') && item.authorization === `Bearer ${secondToken}`));
     assert.equal(requests.filter(item => item.url.includes('/api/v1/search')).length, 0);
@@ -216,15 +220,15 @@ test('authenticated-course-token-and-balance', { timeout: 20000 }, async t => {
 test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t => {
     const { page, requests, open } = await fixture(t, { local: localToken, healthy: false, workTask: true });
     await open(dashboardUrl);
-    await page.locator('#start').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('脚本初始化成功'));
+    await page.locator('#yixue-run-course').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#yixue-course-log')?.textContent.includes('脚本初始化成功'));
     await page.waitForFunction(() => document.querySelector('.yixue-brand-mark img')?.naturalWidth > 0);
     assert.equal(await page.locator('.yixue-brand-mark img').getAttribute('src'), logoUrl);
     assert.equal(await page.locator('.yixue-brand-mark img').getAttribute('referrerpolicy'), 'no-referrer');
-    assert.equal(await page.locator('#tokenInput').inputValue(), localToken);
-    assert.match(await page.locator('#ugyvciuu').inputValue(), /未连接|未激活/);
-    assert.equal(await page.locator('.yixue-connection-status').getAttribute('data-connected'), 'false');
-    assert.equal(await page.locator('.yixue-connection-status').innerText(), '本地模式');
+    assert.equal(await page.locator('#yixue-dashboard-token').inputValue(), localToken);
+    assert.match(await page.locator('#yixue-dashboard-balance').inputValue(), /未连接|未激活/);
+    assert.equal(await page.locator('.yixue-topbar .yixue-connection-status').getAttribute('data-connected'), 'false');
+    assert.equal(await page.locator('.yixue-topbar .yixue-connection-status').innerText(), '本地模式');
     const videoSwitch = page.getByRole('switch', { name: '视频任务', exact: true });
     assert.equal(await videoSwitch.getAttribute('aria-checked'), 'true');
     assert.match(await videoSwitch.getAttribute('class'), /\bbtn-primary\b/);
@@ -233,9 +237,9 @@ test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t 
         assert.match(await page.locator(`#${id}`).getAttribute('class'), /\bbtn-primary\b/);
     }
     assert.equal(await page.getByRole('progressbar', { name: '当前任务进度' }).getAttribute('aria-valuenow'), '0');
-    assert.equal(await page.locator('#yixueProgressValue').innerText(), '0%');
+    assert.equal(await page.locator('#yixue-course-progress-value').innerText(), '0%');
     await page.screenshot({ path: path.join(artifacts, 'course-dashboard-preview.png'), fullPage: true, animations: 'disabled' });
-    const boxes = await page.locator('.row.justify-content-center > .col-6').evaluateAll(elements => elements.slice(0, 2).map(element => {
+    const boxes = await page.locator('.yixue-dashboard-columns > .yixue-dashboard-column').evaluateAll(elements => elements.slice(0, 2).map(element => {
         const box = element.getBoundingClientRect();
         return { x: box.x, y: box.y, width: box.width };
     }));
@@ -244,14 +248,14 @@ test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t 
     assert.ok(boxes[1].x > boxes[0].x + boxes[0].width - 2, 'desktop dashboard uses two columns');
     assert.ok(Math.abs(boxes[0].y - boxes[1].y) < 2, 'task controls and log start on the same row');
     assert.equal(await page.locator('link[rel="stylesheet"]').count(), 0, 'dashboard CSS is bundled in the userscript');
-    const refreshAligned = () => page.locator('#ciuuq').evaluate(button => {
-        const input = document.querySelector('#ugyvciuu').getBoundingClientRect();
+    const refreshAligned = () => page.locator('#yixue-dashboard-refresh').evaluate(button => {
+        const input = document.querySelector('#yixue-dashboard-balance').getBoundingClientRect();
         const refresh = button.getBoundingClientRect();
         return refresh.top >= input.top - 2 && refresh.bottom <= input.bottom + 2;
     });
     assert.ok(await refreshAligned(), 'desktop refresh link stays beside the balance input, above account details');
     await page.setViewportSize({ width: 390, height: 844 });
-    const mobile = await page.locator('.row.justify-content-center > .col-6').evaluateAll(elements => elements.slice(0, 2).map(element => {
+    const mobile = await page.locator('.yixue-dashboard-columns > .yixue-dashboard-column').evaluateAll(elements => elements.slice(0, 2).map(element => {
         const box = element.getBoundingClientRect();
         return { x: box.x, y: box.y, width: box.width, bottom: box.bottom };
     }));
@@ -267,12 +271,28 @@ test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t 
     await videoSwitch.click();
     await page.waitForFunction(() => document.querySelector('#doVideo')?.getAttribute('aria-checked') === 'true');
     assert.equal(await page.evaluate(() => GM_getValue('doVideo')), true);
-    await page.locator('#beisuInput').fill('0.75');
-    await page.locator('#vgqtlv').fill('77');
-    await page.locator('#saveConfig').click();
+    const switches = page.getByRole('switch');
+    assert.equal(await switches.count(), 6, 'six independent task switches are available');
+    assert.equal(await page.getByRole('checkbox', { name: /章节测验达标后提交/ }).isChecked(), true);
+    assert.equal(await page.getByRole('checkbox', { name: /启用 AI 参考答案/ }).isChecked(), false);
+    await page.getByRole('checkbox', { name: /启用 AI 参考答案/ }).check();
+    assert.equal(await page.evaluate(() => GM_getValue('doAI')), true);
+    await page.getByRole('checkbox', { name: /启用 AI 参考答案/ }).uncheck();
+    assert.equal(await page.evaluate(() => GM_getValue('doAI')), false);
+    const beforeIndependentChange = await switches.evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.id, node.getAttribute('aria-checked')])));
+    await page.locator('#doRenwu').click();
+    assert.equal(await page.evaluate(() => GM_getValue('doRenwu')), true);
+    const afterIndependentChange = await switches.evaluateAll(nodes => Object.fromEntries(nodes.map(node => [node.id, node.getAttribute('aria-checked')])));
+    for (const key of Object.keys(beforeIndependentChange).filter(key => key !== 'doRenwu')) assert.equal(afterIndependentChange[key], beforeIndependentChange[key], `${key} is unaffected by another switch`);
+    await page.locator('#doRenwu').click();
+    await page.locator('#yixue-video-speed').fill('0.75');
+    await page.locator('#yixue-answer-threshold').fill('77');
+    await page.locator('#yixue-save-settings').click();
     await page.getByText('配置保存成功，已实时生效', { exact: true }).waitFor();
-    await page.locator('.alert .button').click();
-    await page.locator('#start').click();
+    assert.equal(await page.evaluate(() => GM_getValue('beisu')), .75);
+    assert.equal(await page.evaluate(() => GM_getValue('vgqtlv')), 77);
+    await page.getByRole('dialog', { name: '配置已保存' }).getByRole('button', { name: '确定', exact: true }).click();
+    await page.locator('#yixue-run-course').click();
     await page.getByText('文档任务完成：无 Token 文档回归', { exact: false }).waitFor({ timeout: 20000 });
     assert.equal(requests.filter(item => item.url.includes('/api/v1/search')).length, 0);
     assert.equal(requests.filter(item => item.url.includes('/api/v1/balance')).length, 0);
@@ -280,19 +300,19 @@ test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t 
     assert.equal(requests.filter(item => item.url.includes('/work/phone/work')).length, 0, 'no token: do not load or change quiz documents');
     assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), '');
     assert.deepEqual(await page.evaluate(() => globalThis.fixtureAlerts || []), []);
-    assert.doesNotMatch(await page.locator('#log').innerText(), /无法预料的错误/);
+    assert.doesNotMatch(await page.locator('#yixue-course-log').innerText(), /无法预料的错误/);
 });
 
 test('authenticated-dashboard-initialization', { timeout: 20000 }, async t => {
     const { page, requests, open } = await fixture(t, { token: firstToken });
     await open(dashboardUrl);
-    await page.locator('#start').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#ugyvciuu')?.value.includes('42'));
-    assert.equal(await page.locator('#tokenInput').inputValue(), firstToken);
-    assert.equal(await page.locator('.yixue-connection-status').getAttribute('data-connected'), 'true');
-    assert.equal(await page.locator('.yixue-connection-status').innerText(), '已连接题库');
-    assert.equal(await page.locator('#tokenInput').getAttribute('type'), 'password');
+    await page.locator('#yixue-run-course').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#yixue-dashboard-balance')?.value.includes('42'));
+    assert.equal(await page.locator('#yixue-dashboard-token').inputValue(), firstToken);
+    assert.equal(await page.locator('.yixue-topbar .yixue-connection-status').getAttribute('data-connected'), 'true');
+    assert.equal(await page.locator('.yixue-topbar .yixue-connection-status').innerText(), '已连接题库');
+    assert.equal(await page.locator('#yixue-dashboard-token').getAttribute('type'), 'password');
     assert.match(await page.locator('[data-yixue-balance]').first().innerText(), /17\/100/);
-    assert.match(await page.locator('#log').innerText(), /脚本初始化成功/);
+    assert.match(await page.locator('#yixue-course-log').innerText(), /脚本初始化成功/);
     assert.equal(requests.filter(item => item.url.includes('/api/v1/search')).length, 0);
 });
