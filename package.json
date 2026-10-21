@@ -1,12 +1,12 @@
 {
   "name": "yixue-chaoxing-assistant",
-  "version": "3.3.3",
+  "version": "3.3.4",
   "private": true,
   "engines": { "node": ">=22.18.0" },
   "scripts": {
     "test": "node --test tests/question-bank.test.cjs tests/course-access.test.cjs",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include **/artifacts/question-bank-client.cjs --test-coverage-include **/artifacts/course-access.cjs --test-coverage-lines 80 --test-coverage-branches 80 --test-coverage-functions 80 tests/question-bank.test.cjs tests/course-access.test.cjs",
-    "test:ui": "node --test tests/course-ui.test.cjs",
+    "test:ui": "node --test tests/course-ui.test.cjs tests/course-popup.test.cjs tests/course-engine.test.cjs",
     "build": "node scripts/build.cjs"
   }
 }

@@ -1,12 +1,15 @@
 const assert = require('node:assert/strict');
 const { before, after, test } = require('node:test');
-const { mkdirSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const source = readFileSync(path.join(root, readdirSync(root).find(name => name.endsWith('.txt.js'))), 'utf8');
 const version = source.match(/^\/\/ @version\s+(\S+)/m)[1];
 const artifacts = path.join(root, 'artifacts');
+const logoUrl = 'https://yixue-cmg.pages.dev/assets/yixue-logo.png';
+const logoPath = path.join(artifacts, 'yixue-logo.png');
+const logoImage = existsSync(logoPath) ? readFileSync(logoPath) : Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZAAAAABJRU5ErkJggg==', 'base64');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const bank = 'https://tk.sanzwk.com';
 const courseOrigin = 'https://mooc1.chaoxing.com';
@@ -94,6 +97,7 @@ async function fixture(t, { token = '', local = '', healthy = true, workTask = f
         const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
         const json = (body, status = 200) => route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(body) });
         const html = body => route.fulfill({ headers, contentType: 'text/html; charset=utf-8', body });
+        if (url.href === logoUrl) return route.fulfill({ contentType: 'image/png', body: logoImage });
         if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
         if (url.origin === bank && url.pathname === '/api/health') return json({ status: healthy ? 'ok' : 'unavailable' }, healthy ? 200 : 503);
         if (url.origin === bank && url.pathname === '/api/v1/balance') {
@@ -175,8 +179,9 @@ test('first-run-manual-token-and-cancel', { timeout: 20000 }, async t => {
     const access = page.getByRole('dialog', { name: '首次使用易学助手', exact: true });
     await access.getByRole('button', { name: '手动填写 Token', exact: true }).click();
     const manual = page.getByRole('dialog', { name: '手动填写 Token', exact: true });
-    await manual.getByRole('button', { name: '取消', exact: true }).click();
+    await manual.getByLabel('搜题 API Token').press('Escape');
     await access.waitFor({ state: 'visible' });
+    assert.equal(await access.count(), 1, 'Escape closes only the upper Token dialog, leaving the welcome dialog available');
     assert.equal(await page.getByRole('dialog', { name: '手动填写 Token', exact: true }).count(), 0);
     assert.equal(await page.evaluate(() => GM_getValue('yixueLocalToken', '')), '');
     assert.equal(await page.evaluate(() => GM_getValue('shenchanranToken', '')), '');
@@ -213,6 +218,9 @@ test('guest-dashboard-layout-config-and-quiz-skip', { timeout: 35000 }, async t 
     await open(dashboardUrl);
     await page.locator('#start').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelector('#log')?.textContent.includes('脚本初始化成功'));
+    await page.waitForFunction(() => document.querySelector('.yixue-brand-mark img')?.naturalWidth > 0);
+    assert.equal(await page.locator('.yixue-brand-mark img').getAttribute('src'), logoUrl);
+    assert.equal(await page.locator('.yixue-brand-mark img').getAttribute('referrerpolicy'), 'no-referrer');
     assert.equal(await page.locator('#tokenInput').inputValue(), localToken);
     assert.match(await page.locator('#ugyvciuu').inputValue(), /未连接|未激活/);
     assert.equal(await page.locator('.yixue-connection-status').getAttribute('data-connected'), 'false');

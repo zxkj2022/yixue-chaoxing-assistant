@@ -6,7 +6,7 @@
 // @description:zh-TW  易學·超星學習通助手：提供超星學習通頁面輔助、進度管理與題庫查詢結果展示；答案僅供學習核對，請人工確認後提交。
 // @description:en     Yixue Chaoxing Learning Assistant: page assistance, progress management, and question-bank result display; verify answers manually before submission.
 // @namespace    易学团队
-// @version      3.3.3
+// @version      3.3.4
 // @homepageURL  https://github.com/zxkj2022/yixue-chaoxing-assistant
 // @updateURL    https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
 // @downloadURL  https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
@@ -99,6 +99,7 @@
 // @connect      mooc1.ntu.edu.cn
 // @connect      stat2-ans.xynu.edu.cn
 // @connect      mobilelearn.chaoxing.com
+// @connect      k.chaoxing.com
 // @connect      stat2-ans.ntu.edu.cn
 // @connect      mooc1.hnvist.cn
 // @connect      stat2-ans.hnvist.cn
@@ -117,6 +118,44 @@
 // @supportURL https://tk.sanzwk.com/
 // ==/UserScript==
 !!(async function () {
+    let courseUiSuppressed = false;
+    const isCourseEntrance = /\/mycourse\/(?:stu|studentcourse)(?:\?|$)/i.test(window.location.href);
+    if (isCourseEntrance) {
+        const marker = 'data-yixue-course-owner';
+        if (document.documentElement.hasAttribute(marker)) return;
+        document.documentElement.setAttribute(marker, 'pending');
+        const channel = 'yixue-course-ui-owner-v1';
+        if (window.top === window) {
+            document.documentElement.setAttribute(marker, 'top');
+            window.addEventListener('message', event => {
+                if (event.data?.channel !== channel || event.data.type !== 'probe' || typeof event.data.id !== 'string' || event.data.id.length > 100) return;
+                try { event.source?.postMessage({ channel, type: 'owner', id: event.data.id }, event.origin === 'null' ? '*' : event.origin); } catch (_) {}
+            });
+            for (let index = 0; index < window.frames.length; index++) {
+                try { window.frames[index].postMessage({ channel, type: 'ready' }, '*'); } catch (_) {}
+            }
+        } else {
+            const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+            await new Promise(resolve => {
+                let settled = false;
+                let timer;
+                const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
+                window.addEventListener('message', event => {
+                    if (event.source !== window.top || event.data?.channel !== channel) return;
+                    if (event.data.type !== 'ready' && !(event.data.type === 'owner' && event.data.id === id)) return;
+                    courseUiSuppressed = true;
+                    document.documentElement.setAttribute(marker, 'delegated');
+                    document.getElementById('yixue-course-options')?.remove();
+                    window.dispatchEvent(new Event('yixue-course-ui-suppressed'));
+                    finish();
+                });
+                timer = setTimeout(finish, 450);
+                try { window.top.postMessage({ channel, type: 'probe', id }, '*'); } catch (_) { finish(); }
+            });
+            if (courseUiSuppressed) return;
+            document.documentElement.setAttribute(marker, 'frame');
+        }
+    }
     // BEGIN QUESTION BANK CLIENT
     // Standalone transport: the page code below consumes a normalized answer string.
     function createQuestionBankClient({ request, getValue, setValue, toText = value => String(value ?? ''), now = () => Date.now() }) {
@@ -348,80 +387,175 @@
             element.textContent = connected ? '已连接题库' : '本地模式';
         }
         for (const element of document.querySelectorAll('[data-yixue-balance]')) element.textContent = label;
-        for (const button of document.querySelectorAll('[data-yixue-balance-refresh]')) button.disabled = state.loading;
+        for (const button of document.querySelectorAll('[data-yixue-balance-refresh], #tokenTip')) button.disabled = state.loading;
         for (const element of document.querySelectorAll('[data-yixue-usage]')) element.textContent = questionBank.usageLabel();
         for (const id of ['ugyvciuu', 'tokenLeft']) {
             const input = document.getElementById(id);
             if (!input) continue;
             input.value = !connected ? '未连接题库' : state.data ? `积分：${state.data.points}` : state.error ? '额度查询失败' : '正在获取额度';
             input.title = label;
-            const container = input.closest('.form-group') || input.parentElement.parentElement;
+            const container = input.closest('[data-yixue-account]') || input.closest('.form-group') || input.parentElement.parentElement;
             let detail = container.querySelector('[data-yixue-balance]');
             if (!detail) { detail = document.createElement('small'); detail.dataset.yixueBalance = ''; detail.style.cssText = 'display:block;white-space:normal;line-height:1.6;margin-top:6px'; container.append(detail); }
             detail.textContent = label;
         }
     };
     questionBank.onBalanceChange(renderAccountBalance);
+    const installCourseEntryStyles = () => {
+        if (document.documentElement.dataset.yixueEntryStyles) return;
+        document.documentElement.dataset.yixueEntryStyles = '1';
+        GM_addStyle(`
+            .yx-modal-layer { position:fixed; inset:0; z-index:2147483600; display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; background:#18213166; backdrop-filter:blur(8px); font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; color:#1d1d1f; }
+            .yx-modal-layer *, .yx-modal-layer *::before, .yx-modal-layer *::after { box-sizing:border-box; }
+            .yx-modal-backdrop { position:absolute; inset:0; }
+            .yx-course-sheet { position:relative; width:min(900px,100%); max-height:calc(100dvh - 40px); overflow:auto; background:#fff; padding:28px; border:1px solid #ffffffb3; border-radius:26px; box-shadow:0 28px 90px #111a3038; }
+            .yx-course-sheet.yx-compact { width:min(540px,100%); }
+            .yx-course-heading { display:flex; align-items:center; gap:12px; margin-bottom:23px; }
+            .yx-course-mark { display:grid; place-items:center; flex-shrink:0; width:42px; height:42px; border-radius:13px; background:#007aff; color:#fff; font-size:24px; font-weight:650; }
+            .yx-course-mark:has(img) { background:transparent; }
+            .yx-course-mark img { display:block; width:100%; height:100%; object-fit:contain; border-radius:inherit; }
+            .yx-course-sheet h2 { font-family:inherit; font-weight:650; font-size:21px; line-height:1.35; margin:0; color:#1d1d1f; letter-spacing:-.5px; }
+            .yx-course-subtitle { margin:4px 0 0; color:#737b88; font-size:12px; }
+            .yx-close { display:grid; place-items:center; width:32px; height:32px; flex-shrink:0; margin-left:auto; border:0; border-radius:50%; background:#f0f1f4; color:#7c8390; font:22px/1 sans-serif; cursor:pointer; }
+            .yx-account-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:23px; }
+            .yx-account-field { min-width:0; padding:16px; border:1px solid #e9ecf2; border-radius:17px; background:#fafbfc; }
+            .yx-account-label { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; color:#606977; font-size:12px; font-weight:550; }
+            .yx-input-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            .yx-course-sheet input { flex:1 1 120px; min-width:0; width:100%; height:44px; padding:10px 12px; border:1px solid #e0e5ed; border-radius:11px; background:#fff; color:#465161; outline:none; font-family:inherit; font-size:13px; line-height:1.5; font-variant-numeric:tabular-nums; }
+            .yx-course-sheet input:focus { border-color:#82b7ff; box-shadow:0 0 0 3px #007aff12; }
+            .yx-course-sheet input[readonly] { background:#f1f3f6; color:#737c89; }
+            .yx-course-sheet #tokenLeft { flex:1 1 140px; }
+            .yx-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:10px 15px; flex-shrink:0; border:1px solid #e0ebfc; border-radius:11px; color:#006fe8; background:#edf4ff; text-decoration:none; white-space:nowrap; font:inherit; font-size:13px; font-weight:550; cursor:pointer; transition:background .15s,transform .15s; }
+            .yx-button:hover { background:#e2edff; }
+            .yx-button:active, .yx-action:active { transform:scale(.98); }
+            .yx-button.yx-primary { border-color:#007aff; background:#007aff; color:#fff; }
+            .yx-button.yx-quiet { background:#f1f2f5; color:#626c7b; border-color:#ebedf2; }
+            .yx-refresh { border:0; padding:0; background:none; color:#007aff; font:inherit; font-size:11px; cursor:pointer; white-space:nowrap; }
+            .yx-refresh:disabled { color:#9aa3b1; cursor:wait; }
+            .yx-course-sheet [data-yixue-balance] { font-size:11px; line-height:1.7!important; margin-top:9px!important; color:#757f8d; }
+            .yx-course-sheet .yixue-connection-status { display:inline-flex; align-items:center; gap:5px; border-radius:99px; padding:3px 8px; background:#eef0f4; color:#737c8c; font-size:10px; white-space:nowrap; }
+            .yx-course-sheet .yixue-connection-status::before { content:""; width:5px; height:5px; background:#99a1ae; border-radius:50%; }
+            .yx-course-sheet .yixue-connection-status[data-connected="true"] { color:#287246; background:#eaf7ee; }
+            .yx-course-sheet .yixue-connection-status[data-connected="true"]::before { background:#39a160; }
+            .yx-action-heading { margin:0 0 4px; font-size:15px; font-weight:650; }
+            .yx-body-copy { margin:0 0 17px; font-size:12px; color:#737d8c; line-height:1.8; }
+            .yx-action-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+            .yx-action { display:flex; flex-direction:column; align-items:flex-start; gap:5px; min-width:0; padding:17px 14px; border:1px solid #e9ecf2; border-radius:17px; background:#f6f8fb; text-align:left; color:#425166; font:inherit; cursor:pointer; transition:background .15s,transform .15s; }
+            .yx-action:hover { background:#edf3fb; }
+            .yx-action-main { color:#fff; border-color:#007aff; background:#007aff; }
+            .yx-action-main:hover { background:#006ce6; }
+            .yx-action-icon { display:grid; place-items:center; width:28px; height:28px; margin-bottom:5px; border:1px solid #dfe8f6; border-radius:9px; color:#0679f4; background:#fff; font-size:15px; }
+            .yx-action-main .yx-action-icon { color:#fff; background:#ffffff26; border-color:#ffffff22; }
+            .yx-action-title { font-size:15px; font-weight:600; white-space:nowrap; }
+            .yx-action-description { font-size:10px; line-height:1.7; color:#828c9c; }
+            .yx-action-main .yx-action-description { color:#ffffffcf; }
+            .yx-entry-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:24px; padding-top:18px; border-top:1px solid #edf0f4; }
+            .yx-entry-footer small { color:#818a98; font-size:11px; line-height:1.8; }
+            .yx-course-sheet #tokentip { margin:0 0 15px; padding:10px 13px; background:#f1f6ff; border-radius:11px; color:#577096; font-size:12px; }
+            .yx-choice-grid { display:grid; grid-template-columns:1fr; gap:11px; margin-top:20px; }
+            .yx-choice { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 14px; border:1px solid #e9ecf3; border-radius:15px; background:#f8fafe; }
+            .yx-choice .yx-button { flex:0 0 auto; min-width:145px; }
+            .yx-choice small { color:#7c8797; font-size:11px; line-height:1.7; }
+            .yx-course-sheet .yx-form-input { display:block; width:100%; margin:18px 0 12px; }
+            .yx-error { color:#b73e47; font-size:12px; min-height:20px; margin:0 0 10px; }
+            .yx-course-sheet button:focus-visible, .yx-course-sheet a:focus-visible { outline:3px solid #83b7ff; outline-offset:3px; }
+            @media(max-width:640px) { .yx-modal-layer { padding:14px; } .yx-course-sheet { padding:21px; border-radius:23px; max-height:calc(100dvh - 28px); } .yx-course-sheet h2 { font-size:18px; } .yx-course-mark { width:36px; height:36px; font-size:21px; border-radius:11px; } .yx-course-heading { gap:10px; margin-bottom:19px; } .yx-account-grid { grid-template-columns:1fr; gap:11px; } .yx-account-field { padding:13px; } .yx-action-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .yx-entry-footer { align-items:flex-start; gap:12px; } .yx-choice { padding:12px; } .yx-choice .yx-button { min-width:130px; font-size:12px; } }
+            @media(prefers-reduced-motion:reduce) { .yx-button, .yx-action { transition:none; } }
+        `);
+    };
+    const bindCourseModal = (layer, close) => {
+        const previous = document.activeElement;
+        const onKey = event => {
+            if (event.defaultPrevented || !['Escape', 'Tab'].includes(event.key)) return;
+            const visibleLayers = [...document.querySelectorAll('.yx-modal-layer')].filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+            visibleLayers.sort((left, right) => (Number(getComputedStyle(left).zIndex) || 0) - (Number(getComputedStyle(right).zIndex) || 0));
+            if (visibleLayers.at(-1) !== layer) return;
+            if (event.key === 'Escape') { event.preventDefault(); close(); }
+            if (event.key !== 'Tab') return;
+            const controls = [...layer.querySelectorAll('button:not([disabled]),a[href],input:not([disabled])')].filter(element => element.getClientRects().length);
+            const first = controls[0], last = controls[controls.length - 1];
+            if (!layer.contains(document.activeElement)) { event.preventDefault(); (event.shiftKey ? last : first)?.focus(); }
+            else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        };
+        const onBackdrop = event => { if (event.target === layer || event.target.classList.contains('yx-modal-backdrop')) close(); };
+        document.addEventListener('keydown', onKey);
+        layer.addEventListener('click', onBackdrop);
+        window.addEventListener('yixue-course-ui-suppressed', close);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            layer.removeEventListener('click', onBackdrop);
+            window.removeEventListener('yixue-course-ui-suppressed', close);
+            if (previous?.isConnected) previous.focus();
+        };
+    };
     let tokenDialog;
     const requestApiToken = () => {
+        if (courseUiSuppressed) return Promise.resolve('');
         if (tokenDialog) return tokenDialog;
+        installCourseEntryStyles();
         tokenDialog = new Promise(resolve => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed;inset:0;background:#0009;z-index:2147483647;display:flex;align-items:center;justify-content:center';
-            const form = document.createElement('form');
-            form.style.cssText = 'background:white;color:#222;padding:24px;border-radius:12px;width:min(460px,90vw);font:16px/1.6 sans-serif';
-            form.setAttribute('role', 'dialog'); form.setAttribute('aria-label', '手动填写 Token');
-            const title = document.createElement('h3'); title.textContent = '手动填写题库 Token';
-            const info = document.createElement('p'); info.textContent = '需要答题时，请填写题库网站提供的 Token。没有 Token 也可以先进入章节控制台。';
-            const link = document.createElement('a'); link.href = questionBank.base() + '/#integration'; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '连接题库，获取 Token';
-            const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'off'; input.placeholder = 'tk_…'; input.required = true; input.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin:16px 0;padding:10px'; input.setAttribute('aria-label', '搜题 API Token');
-            const error = document.createElement('p'); error.style.color = '#b42318';
-            const save = document.createElement('button'); save.type = 'submit'; save.textContent = '保存 Token';
-            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消'; cancel.style.marginLeft = '12px';
-            const finish = token => { overlay.remove(); tokenDialog = null; resolve(token); };
+            const overlay = document.createElement('div'); overlay.className = 'yx-modal-layer'; overlay.style.zIndex = '2147483647';
+            overlay.dataset.yixueCourseUi = '';
+            const form = document.createElement('form'); form.className = 'yx-course-sheet yx-compact';
+            form.setAttribute('role', 'dialog'); form.setAttribute('aria-modal', 'true'); form.setAttribute('aria-label', '手动填写 Token');
+            form.innerHTML = '<div class="yx-course-heading"><span class="yx-course-mark" aria-hidden="true"><img src="https://yixue-cmg.pages.dev/assets/yixue-logo.png" alt="" referrerpolicy="no-referrer" /></span><div><h2>连接题库</h2><p class="yx-course-subtitle">保存后即可查询参考答案</p></div></div>';
+            const info = document.createElement('p'); info.className = 'yx-body-copy'; info.textContent = '请粘贴题库网站提供的 Token。本地随机 Token 不连接题库，视频和文档功能可先使用。';
+            const link = document.createElement('a'); link.href = questionBank.base() + '/#integration'; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '打开题库网站，获取 Token';
+            const input = document.createElement('input'); input.className = 'yx-form-input'; input.type = 'password'; input.autocomplete = 'off'; input.placeholder = '粘贴题库 Token'; input.required = true; input.setAttribute('aria-label', '搜题 API Token');
+            const error = document.createElement('p'); error.className = 'yx-error'; error.setAttribute('role', 'alert');
+            const actions = document.createElement('div'); actions.className = 'yx-entry-footer';
+            const save = document.createElement('button'); save.type = 'submit'; save.className = 'yx-button yx-primary'; save.textContent = '保存 Token';
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'yx-button yx-quiet'; cancel.textContent = '取消';
+            let cleanup = () => {}, finished = false;
+            const finish = token => { if (finished) return; finished = true; cleanup(); overlay.remove(); tokenDialog = null; resolve(token); };
             cancel.onclick = () => finish('');
             form.onsubmit = event => {
                 event.preventDefault();
                 const token = input.value.trim();
                 try {
                     questionBank.setToken(token);
-                    for (const id of ['token', 'tokenInput']) {
-                        const field = document.getElementById(id);
-                        if (field) { field.value = token; field.type = 'password'; }
-                    }
-                    void questionBank.refreshBalance({ force: true });
-                    finish(token);
+                    for (const id of ['token', 'tokenInput']) { const field = document.getElementById(id); if (field) { field.value = token; field.type = 'password'; } }
+                    void questionBank.refreshBalance({ force: true }); finish(token);
                 } catch (err) { error.textContent = err.message; }
             };
-            form.append(title, info, link, input, error, save, cancel); overlay.append(form); document.body.append(overlay); input.focus();
+            actions.append(save, cancel); form.append(info, link, input, error, actions); overlay.append(form); document.body.append(overlay);
+            cleanup = bindCourseModal(overlay, () => finish('')); input.focus();
         });
         return tokenDialog;
     };
     let courseAccessDialog;
     const requestCourseAccess = () => {
+        if (courseUiSuppressed) return Promise.resolve('');
         if (courseAccess.hasAccess()) return Promise.resolve(courseAccess.getDisplayToken());
         if (courseAccessDialog) return courseAccessDialog;
+        installCourseEntryStyles();
         courseAccessDialog = new Promise(resolve => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed;inset:0;background:#0008;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
-            const panel = document.createElement('section');
-            panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', '首次使用易学助手');
-            panel.style.cssText = 'background:#fff;color:#111;border-radius:12px;padding:28px;box-sizing:border-box;width:min(560px,100%);text-align:center;font:18px/1.7 sans-serif;box-shadow:0 16px 50px #0003';
-            const title = document.createElement('h2'); title.textContent = '易学·超星学习通助手'; title.style.cssText = 'font-size:28px;font-weight:500;margin:0 0 12px';
-            const info = document.createElement('p'); info.textContent = '首次使用请选择接入方式。随机 Token 仅保存在本机，不连接题库；可先进入章节控制台，需要答题时再连接题库。';
-            const buttons = document.createElement('div'); buttons.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:24px';
-            const makeButton = text => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.style.cssText = 'border:0;border-radius:5px;padding:12px 20px;background:#4caf50;color:#fff;cursor:pointer;font:inherit'; buttons.append(button); return button; };
-            const connect = makeButton('连接题库');
-            const random = makeButton('随机生成 Token');
-            const manual = makeButton('手动填写 Token');
-            const cancel = makeButton('取消'); cancel.style.background = '#b84b4b';
-            const finish = token => { overlay.remove(); courseAccessDialog = null; resolve(token); };
-            connect.onclick = () => { window.open(questionBank.base() + '/#integration', '_blank', 'noopener,noreferrer'); info.textContent = '登录题库网站并获取 Token 后，点击「手动填写 Token」粘贴保存。也可随机生成本地 Token，先使用视频和文档功能。'; };
+            const overlay = document.createElement('div'); overlay.className = 'yx-modal-layer'; overlay.style.zIndex = '2147483646'; overlay.dataset.yixueCourseUi = '';
+            const panel = document.createElement('section'); panel.className = 'yx-course-sheet yx-compact';
+            panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', '首次使用易学助手');
+            panel.innerHTML = '<div class="yx-course-heading"><span class="yx-course-mark" aria-hidden="true"><img src="https://yixue-cmg.pages.dev/assets/yixue-logo.png" alt="" referrerpolicy="no-referrer" /></span><div><h2>欢迎使用易学助手</h2><p class="yx-course-subtitle">选择接入方式，开始配置课程任务</p></div></div>';
+            const info = document.createElement('p'); info.className = 'yx-body-copy'; info.textContent = '随机生成的 Token 仅保存在本机，不连接题库。需要答题时，再填写题库提供的 Token。';
+            const choices = document.createElement('div'); choices.className = 'yx-choice-grid';
+            const choice = (text, description, primary = false) => {
+                const row = document.createElement('div'); row.className = 'yx-choice';
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'yx-button' + (primary ? ' yx-primary' : ''); button.textContent = text;
+                const hint = document.createElement('small'); hint.textContent = description; row.append(button, hint); choices.append(row); return button;
+            };
+            const random = choice('随机生成 Token', '先使用视频、文档等功能', true);
+            const connect = choice('连接题库', '前往题库获取答题凭据');
+            const manual = choice('手动填写 Token', '已有题库 Token，直接粘贴');
+            const footer = document.createElement('div'); footer.className = 'yx-entry-footer';
+            const note = document.createElement('small'); note.textContent = '可稍后通过脚本菜单设置题库。';
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'yx-button yx-quiet'; cancel.textContent = '取消'; footer.append(note, cancel);
+            let cleanup = () => {}, finished = false;
+            const finish = token => { if (finished) return; finished = true; cleanup(); overlay.remove(); courseAccessDialog = null; resolve(token); };
+            connect.onclick = () => { window.open(questionBank.base() + '/#integration', '_blank', 'noopener,noreferrer'); info.textContent = '获取题库 Token 后，点击「手动填写 Token」保存；也可先随机生成本地 Token。'; };
             random.onclick = () => finish(courseAccess.createLocalToken());
             manual.onclick = async () => { const token = await requestApiToken(); if (token) finish(token); };
             cancel.onclick = () => finish('');
-            panel.append(title, info, buttons); overlay.append(panel); document.body.append(overlay);
-            random.focus();
+            panel.append(info, choices, footer); overlay.append(panel); document.body.append(overlay);
+            cleanup = bindCourseModal(overlay, () => finish('')); random.focus();
         });
         return courseAccessDialog;
     };
@@ -567,7 +701,16 @@
             font-size:14px;
             font-weight:600;
         `;
-            this.header.textContent = this.POPUP_NAME;
+            const brand = document.createElement('span');
+            brand.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0';
+            const brandLogo = document.createElement('img');
+            brandLogo.src = 'https://yixue-cmg.pages.dev/assets/yixue-logo.png';
+            brandLogo.alt = '';
+            brandLogo.referrerPolicy = 'no-referrer';
+            brandLogo.draggable = false;
+            brandLogo.style.cssText = 'width:24px;height:24px;object-fit:contain;border-radius:7px;flex-shrink:0';
+            brand.append(brandLogo, document.createTextNode(this.POPUP_NAME));
+            this.header.append(brand);
 
             this.minimizeBtn.textContent = this.minimized ? "▶" : "⏸";
             this.minimizeBtn.style.cssText = `
@@ -1216,117 +1359,81 @@
             }
         },
         request = (data) => {
-            let hosts = window.location.href.match(/https:\/\/webvpn\.(.*?)\/https\/[0-9a-z]+\//)
-            if (Array.isArray(hosts) && hosts.length > 0) {
+            return new Promise(resolve => {
+                data = { ...data, headers: { ...data.headers } };
+                let settled = false, watchdog, transport;
+                const finish = result => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(watchdog);
+                    resolve(result);
+                };
+                const failed = message => {
+                    if (settled) return;
+                    try { $w.logs?.addLog(message, 'red'); } catch { }
+                    finish(false);
+                };
+                const loginPage = res => /<title[^>]*>\s*用户登录\s*<\/title>/i.test(String(res?.responseText || '')) || /\/login(?:[/?#]|$)/i.test(String(res?.finalUrl || res?.responseURL || ''));
+                const valid = res => Number(res?.status) >= 200 && Number(res?.status) < 300;
                 try {
-                    if (data.headers && data.headers.Referer) {//修改referer为vpn
-                        try {
-                            const refererObj = new URL(data.headers.Referer)
-                            data.headers.Referer = hosts[0].slice(0, -1) + refererObj.pathname + refererObj.search + refererObj.hash
-                        } catch (e) {
-                            console.log(e)
+                    data.method = String(data.method || 'GET').toUpperCase();
+                    data.timeout = Number(data.timeout) > 0 ? Number(data.timeout) : 10000;
+                    data.headers['Accept-Language'] = 'zh-CN,zh;q=0.9';
+                    new URL(data.url, $l);
+                    const hosts = window.location.href.match(/https:\/\/webvpn\.(.*?)\/https\/[0-9a-z]+\//);
+                    if (hosts?.length) {
+                        const rebuild = url => { const parsed = new URL(url, $l); return hosts[0].slice(0, -1) + parsed.pathname + parsed.search + parsed.hash; };
+                        if (data.headers.Referer) data.headers.Referer = rebuild(data.headers.Referer);
+                        data.url = rebuild(data.url);
+                        if (!data.url.includes('enlink-vpn')) data.url += (data.url.includes('?') ? '&' : '?') + 'enlink-vpn';
+                    }
+                    watchdog = setTimeout(() => {
+                        failed('学习通请求超时，请检查网络后点击启动重试。');
+                        try { transport?.abort(); } catch { }
+                    }, data.timeout * 2 + 1000);
+                    const nativeFallback = () => {
+                        const xhr = new XMLHttpRequest();
+                        transport = xhr;
+                        xhr.open(data.method, data.url, true);
+                        xhr.timeout = data.timeout;
+                        xhr.withCredentials = true;
+                        const loaded = () => {
+                            if (!valid(xhr)) return failed('学习通请求失败（HTTP ' + xhr.status + '），请稍后重试。');
+                            if (loginPage(xhr)) return failed('学习通登录状态失效，请在原学习通页面重新登录后重试。');
+                            finish({ responseText: xhr.responseText, response: xhr.responseText, status: xhr.status, finalUrl: xhr.responseURL });
+                        };
+                        xhr.onload = loaded;
+                        xhr.onreadystatechange = () => { if (xhr.readyState === 4) loaded(); };
+                        xhr.onerror = () => failed('学习通请求失败，请检查网络后重试。');
+                        xhr.ontimeout = () => failed('学习通请求超时，请检查网络后重试。');
+                        xhr.onabort = () => failed('学习通请求已中止，可以重新启动任务。');
+                        for (const [name, value] of Object.entries(data.headers)) {
+                            if (!/^(?:referer|origin|host|cookie|user-agent|sec-)/i.test(name)) xhr.setRequestHeader(name, value);
                         }
-                    }
-                    const urlObj = new URL(data.url)
-                    data.url = hosts[0].slice(0, -1) + urlObj.pathname + urlObj.search + urlObj.hash
-                } catch (e) {//data.url是个路径，不是完整url
-                    if (data.url.charAt(0) == '/') {
-                        data.url = hosts[0].slice(0, -1) + data.url
-                    } else {
-                        data.url = hosts[0] + data.url
-                    }
-                    console.log(e)
+                        xhr.send(data.method === 'GET' || data.method === 'HEAD' ? null : data.data ?? null);
+                    };
+                    data.onload = res => {
+                        if (settled) return;
+                        if (!valid(res)) return failed('学习通请求失败（HTTP ' + (res?.status || 0) + '），请稍后重试。');
+                        if (loginPage(res)) {
+                            if (isSameDomain(data.url, $l)) {
+                                try { nativeFallback(); } catch { failed('无法恢复学习通登录状态，请重新登录后重试。'); }
+                            } else failed('学习通登录状态失效，请重新登录后重试。');
+                        } else finish(res);
+                    };
+                    data.onerror = error => {
+                        const text = String(typeof error === 'string' ? error : error?.error || '');
+                        if (/Refused to connect to|permission/i.test(text)) {
+                            const hostname = new URL(data.url, $l).hostname;
+                            failed('学习通请求被脚本管理器阻止，请添加 @connect 权限：' + hostname + '，保存并刷新后重试。');
+                        } else failed('学习通请求失败，请检查网络后重试。');
+                    };
+                    data.ontimeout = () => failed('学习通请求超时，请检查网络后重试。');
+                    data.onabort = () => failed('学习通请求已中止，可以重新启动任务。');
+                    transport = GM_xmlhttpRequest(data);
+                } catch {
+                    failed('学习通请求无法发出，请检查脚本管理器权限后重试。');
                 }
-                if (!data.url.includes('&enlink-vpn')) {
-                    data.url += '&enlink-vpn'
-                }
-            }//如果检测到校园网，自动重建请求到校园网节点
-            return new Promise((success, fail) => {
-                if (data.method == undefined) {
-                    data.method = 'GET';
-                }
-                data.method = data.method.toUpperCase()
-                if (data.timeout == undefined) {
-                    data.timeout = 10000;
-                }
-                if (!data.headers) {
-                    data.headers = {}
-                }
-                data.headers['Accept-Language'] = 'zh-CN,zh;q=0.9';
-                data.onload = function (res) {
-                    if (res.responseText.includes('<title>用户登录</title>')) {
-                        // 请求后跳转到登录页，说明cookie出现异常（此问题易出现在篡改猴5.2.0版本与同期部分篡改猴beta版）
-                        if (isSameDomain(data.url, $l)) {
-                            let method = data.method
-                            // 是否与页面同域，如果是就改用xhr
-                            const xhr = new XMLHttpRequest()
-                            xhr.open(method, data.url, true)
-                            xhr.onreadystatechange = function () {
-                                if (xhr.readyState === XMLHttpRequest.DONE) {
-                                    if (xhr.status >= 200 && xhr.status < 300) {
-                                        let res = {
-                                            responseText: xhr.responseText,
-                                            status: xhr.status
-                                        }
-                                        success(res)
-                                    } else {
-                                        success(false)
-                                    }
-                                }
-                            }
-                            xhr.onerror = function () {
-                                alert('登录状态失效，请重新登陆超星\n反馈群：' + $qqgroup);
-                                $w.location.href = $protocol + $w.location.host.replace(/mooc(.*?)\./ig, 'passport2.') + '/login?fid=&newversion=true&refer=' + encodeURIComponent($l)
-                            }
-                            xhr.timeout = data.timeout
-                            if (method === 'POST' && data.data) {
-                                if (data.headers) {
-                                    for (let i in data.headers) {
-                                        xhr.setRequestHeader(i, data.headers[i])
-                                    }
-                                }
-                                xhr.send(data.data)
-                            } else {
-                                xhr.send()
-                            }
-                        } else if (GM_info.scriptHandler == "Tampermonkey" && ['5.2.6195', '5.2.6196', '5.2.6197', '5.2.6198', '5.2.6199', '5.2.6200', '5.2.0'].includes(GM_info.version)) {
-                            if (confirm(`您正在使用的油猴插件版本为测试版：${GM_info.version}\n该版本存在未修复的问题，无法稳定的运行此脚本，请使用脚本猫\n点击确定前往脚本猫官网\n反馈群：` + $qqgroup)) {
-                                $w.location.href = 'https://tk.sanzwk.com/'
-                            } else {
-                                success(false)
-                            }
-                        }
-                    } else {
-                        success(res)
-                    }
-                }
-                data.onerror = function (e) {
-                    const hosts = data.url.match(/^http(s)?:\/\/(.*?)\//)
-                    if (hosts && hosts.length > 0) {
-                        let host = hosts[0].replace(/^http(s)?:\/\//, '').replace('\/', '');
-                        if (typeof e == 'object' && e.error && e.error.includes('Refused to connect to')) {
-                            $w.logs.addLog('<br><font color="red">刚刚有一个跨域请求发送失败</font><br>👇请编辑脚本代码，将下方蓝色代码填入脚本指定空白中👇<br><h4><font color="blue">// @connect      ' + host + '</font></h4>👆请编辑脚本代码，将上面蓝色代码填入脚本指定空白中👆<br>别忘了保存并刷新页面哦');
-                            $w.wait = true;
-                        } else if (typeof e == 'string' && e.includes('permission')) {
-                            $w.logs.addLog('<br><font color="red">刚刚有一个跨域请求发送失败</font><br>👇请编辑脚本代码，将下方蓝色代码填入脚本指定空白中👇<br><h4><font color="blue">// @connect      ' + host + '</font></h4>👆请编辑脚本代码，将上面蓝色代码填入脚本指定空白中👆<br>别忘了保存并刷新页面哦');
-                            $w.wait = true;
-                        }
-                    }
-                    try { $w.logs.addLog('请求错误，请检查网络连接', 'red'); } catch (e) { }
-                    if (!$l.includes('chaoxing.com')) {
-                        let classId = $s['clazzid'] || $s['classid'] || $s['classId'] || $s['classId'],
-                            courseId = $s['courseid'] || $s['courseId'];
-                        if (confirm('检测到您使用的是学校定制学习通，可能会出现使用问题\n可以尝试切换到学习通官方页面（需要重新登陆），是否切换？')) {
-                            $w.location.href = 'http://passport2.chaoxing.com/login?refer=http%3A%2F%2Fmooc1.chaoxing.com%2Fvisit%2Fstucoursemiddle%3Fcourseid%3D' + courseId + '%26clazzid%3D' + classId + '%26vc%3D1%26ismooc2%3D1%26v%3D2%26r%3D1&newversion=true&_blank=0';
-                        }
-                    }
-                    console.log(e);
-                    success(false);
-                }
-                data.ontimeout = function () {
-                    success(false);
-                }
-                GM_xmlhttpRequest(data);
             })
         },
         brequest = (data) => {
@@ -1676,16 +1783,6 @@
     if ($l.includes('/mycourse/stu?') || $l.includes('mycourse/studentcourse?')) {
         let newVersion = true
         if ($l.includes('mycourse/studentcourse?')) {
-            if ($w.top != $w) {
-                try {
-                    void window.top.location.href;
-                    return false;
-                } catch (error) {
-                    if (error?.name !== 'SecurityError') {
-                        return true;
-                    }
-                }
-            }
             if (GM_getValue('directToWork', false)) {
                 GM_setValue('directToWork', false)
                 const workButton = $d.querySelector('.workTip')
@@ -1754,123 +1851,36 @@
             return host + `/mooc-ans/course/999999999${$version}.html?` + params
         }
         div.setAttribute('id', 'yixue-course-options');
-        GM_addStyle(`
-            #yixue-course-options #skshadow { position:fixed !important; inset:0 !important; width:auto !important; height:auto !important; }
-            #yixue-course-options #skpannel { position:fixed !important; top:50% !important; left:50% !important; width:min(1040px,calc(100vw - 32px)) !important; max-height:calc(100vh - 32px); overflow:auto !important; box-sizing:border-box; }
-            #yixue-course-options .yixue-account-columns { gap:24px; flex-wrap:wrap; }
-            #yixue-course-options .yixue-account-columns > span { display:block; flex:1 1 300px; min-width:0; }
-            #yixue-course-options .yixue-account-row { gap:10px; flex-wrap:wrap; align-items:center; }
-            #yixue-course-options #token { box-sizing:border-box; flex:1 1 180px; min-width:0; }
-            #yixue-course-options #tokenLeft { box-sizing:border-box; width:140px !important; }
-            #yixue-course-options #saveToken, #yixue-course-options #payToken, #yixue-course-options #tokenTip { white-space:nowrap; flex-shrink:0; margin-left:0 !important; }
-            #yixue-course-options .yixue-course-actions { flex-wrap:wrap; gap:10px; }
-            #yixue-course-options .yixue-course-actions > * { margin:0 !important; white-space:nowrap; }
-        `);
-        if (/Android/i.test(navigator.userAgent) && !/Edg/i.test(navigator.userAgent)) {
-            let a = confirm('【易学·超星学习通助手】\n\n您可能正在使用手机浏览器\n我们不保证脚本能正常运行\n也不保证学习成绩\n建议使用edge手机端浏览器\n点击确定查看详细教程、点击取消关闭此窗口')
-            if (a) {
-                $w.location.href = 'https://greasyfork.cn/post/3'
-            }
-        } else if (/EdgA/i.test(navigator.userAgent)) {
-            alert('【易学·超星学习通助手】\n\n您可能正在使用edge手机浏览器\n我们不保证脚本能在后台正常挂机\n不同手机的后台策略不同，可能在您回到桌面后会自动暂停\n如遇问题请刷新页面或更换为电脑浏览器')
-        }
-        div.innerHTML = `<div id="skshadow" style="
-        width: 100%;
-        height: 100%;
-        position: absolute;
-        top: -20px;
-        left: 0;
-        width: 100%;
-        height: 110%;
-        background-color: rgba(16,26,41,0.76);
-        z-index: 9996;
-        ">
-        </div>
-        <div id="skpannel" style="
-    font-size: 20px;
-        position: absolute;
-        top: 50vh;
-        left: 50vw;
-        transform: translate(-50%,-50%);
-        width: 650px;
-        background-color: #fff;
-        border-radius: 10px;
-        box-shadow: 1px 1px 50px rgba(0,0,0,.3);
-        overflow: hidden;
-        padding: 15px 30px;
-        z-index: 9997;
-            ">
-    
-            <div style="
-        font-size: 26px;
-        width: 100%;
-        font-weight: 500;
-        ">易学·超星学习通助手</div>
-            <div style="display: flex;
-        justify-content: space-between;
-        margin-bottom: 30px;
-        ">
-                <span>
-                    <div style="margin: 20px 0 10px;">题库Token</div>
-                    <span style="display: flex;">
-                        <input id="token" autocomplete="off"
-                            style="color: #495057; outline: none; font-size:18px;width:  250px;height: 40px;border-radius: 10px;padding: 0 10px;border: 1px solid #68A4FF;"
-                            type="password">
-                        <span
-                            style="cursor: pointer; color: #68A4FF; padding: 0 10px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 10px;" id="saveToken">保存</span>
-                    </span>
-    
-                </span>
-                <span>
-                    <div style="margin: 20px 0 10px;">账户额度</div>
-                    <span style="display: flex;">
-                        <input id="tokenLeft" disabled="disabled" value="正在获取额度"
-                            style="color: #495057; outline: none; font-size:18px;width:  180px;height: 40px;border-radius: 10px;padding: 0 10px;border: 1px solid #68A4FF;"
-                            type="text">
-                        <a target="_blank" style="cursor: pointer; color: #68A4FF; padding: 0 10px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 10px;" id="payToken">充值</a>
-                        <span style="
-                    font-size: 14px;
-                    color: #1E9FFF;
-                    cursor: pointer;
-                    display: inline-block;
-                    line-height: 38px;
-                    margin-left: 10px;" id="tokenTip">刷新额度</span>
-                    </span>
-                </span>
-            </div>
-            <div id="tokentip" style="display: none; font-size: 14px; border-top: 1px solid black;border-bottom: 1px solid black;">
-                
-            </div>
-            <div id="updateinfo" style="font-size: 16px;text-align: center;color: red;display: none;">脚本有新版本，<a href="https://tk.sanzwk.com/script-show-page/1127" target="_blank">点我前往更新</a></div>
-            <div style="font-size: 16px;text-align: center;">该课程支持刷课，请选择您要刷的内容</div>
-            <div style="margin-top: 20px;display: flex;justify-content: center;margin-bottom: 10px;">
-                <a
-                    target="_blank" style="cursor: pointer; background-color: #68A4FF; color: white; padding: 2px 15px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 23px;margin-right: 10px;"
-                    id="dosk">刷章节</a>
-                <span
-                    style="cursor: pointer; background-color: #68A4FF; color: white; padding: 2px 15px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 23px;margin-right: 10px;"
-                    id="doHomework">刷作业</span>
-                <span
-                    style="cursor: pointer; background-color: #68A4FF; color: white; padding: 2px 15px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 23px;margin-right: 10px;"
-                    id="doExam">刷考试</span>
-                <span
-                    style="cursor: pointer; background-color: #68A4FF; color: white; padding: 2px 15px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 23px;"
-                    id="doxxcs">刷学习次数</span>
-                <span
-                    style="cursor: pointer; background-color: #68A4FF; color: white; padding: 2px 15px; line-height: 38px; height: 38px;margin-left: 10px; border: 1px solid #68A4FF;display: inline-block ;border-radius: 23px;"
-                    id="canclesk">取消</span>
-            </div>
-        </div>`
-        const tokenRow = div.querySelector('#token').parentElement;
-        tokenRow.classList.add('yixue-account-row');
-        tokenRow.parentElement.parentElement.classList.add('yixue-account-columns');
-        div.querySelector('#tokenLeft').parentElement.classList.add('yixue-account-row');
-        div.querySelector('#dosk').parentElement.classList.add('yixue-course-actions');
+        div.className = 'yx-modal-layer';
+        div.dataset.yixueCourseUi = '';
+        installCourseEntryStyles();
+        div.innerHTML = `
+            <div id="skshadow" class="yx-modal-backdrop"></div>
+            <section id="skpannel" class="yx-course-sheet" role="dialog" aria-modal="true" aria-label="课程功能选择">
+                <header class="yx-course-heading"><span class="yx-course-mark" aria-hidden="true"><img src="https://yixue-cmg.pages.dev/assets/yixue-logo.png" alt="" referrerpolicy="no-referrer" /></span><div><h2>易学·学习通助手</h2><p class="yx-course-subtitle">课程任务入口</p></div><button type="button" class="yx-close" data-yixue-close aria-label="关闭">×</button></header>
+                <div class="yx-account-grid">
+                    <div class="yx-account-field" data-yixue-account><label class="yx-account-label" for="token">题库 Token<span class="yixue-connection-status" data-connected="false">本地模式</span></label><div class="yx-input-row"><input id="token" type="password" autocomplete="off" aria-label="题库 Token" /><button type="button" class="yx-button" id="saveToken">保存</button></div></div>
+                    <div class="yx-account-field" data-yixue-account><label class="yx-account-label" for="tokenLeft">账户额度<button type="button" class="yx-refresh" id="tokenTip">刷新额度</button></label><div class="yx-input-row"><input id="tokenLeft" type="text" readonly value="正在获取额度" /><a id="payToken" class="yx-button" target="_blank" rel="noopener noreferrer">充值</a></div></div>
+                </div>
+                <p id="tokentip" role="status" aria-live="polite" style="display:none"></p>
+                <h3 class="yx-action-heading">选择学习任务</h3><p class="yx-body-copy">进入控制台配置任务，或前往作业和考试页面。</p>
+                <div class="yx-action-grid">
+                    <button type="button" id="dosk" class="yx-action yx-action-main" aria-label="刷章节"><span class="yx-action-icon" aria-hidden="true">▶</span><span class="yx-action-title">刷章节</span><span class="yx-action-description">视频、文档与章节任务</span></button>
+                    <button type="button" id="doHomework" class="yx-action" aria-label="刷作业"><span class="yx-action-icon" aria-hidden="true">▤</span><span class="yx-action-title">刷作业</span><span class="yx-action-description">进入课程作业列表</span></button>
+                    <button type="button" id="doExam" class="yx-action" aria-label="刷考试"><span class="yx-action-icon" aria-hidden="true">✓</span><span class="yx-action-title">刷考试</span><span class="yx-action-description">进入课程考试页面</span></button>
+                    <button type="button" id="doxxcs" class="yx-action" aria-label="刷学习次数"><span class="yx-action-icon" aria-hidden="true">↻</span><span class="yx-action-title">刷学习次数</span><span class="yx-action-description">进入章节访问流程</span></button>
+                </div>
+                <footer class="yx-entry-footer"><small>本地随机 Token 不连接题库，答题前请填写题库 Token。</small><button type="button" class="yx-button yx-quiet" id="canclesk">取消</button></footer>
+            </section>`;
         hostCheck({ requireToken: false }).then(server => {
-            if (!server) return;
+            if (!server || courseUiSuppressed) return;
                 const tempUIdElement = $d.querySelector("input[name='userId']") || $d.querySelector("input[id='uploadUid']")
                 if (tempUIdElement && !$uid) $uid = tempUIdElement.value
                 body.appendChild(div)
+                let cleanupModal = () => {};
+                const closePanel = () => { cleanupModal(); div.style.display = 'none'; };
+                cleanupModal = bindCourseModal(div, closePanel);
+                div.querySelector('[data-yixue-close]').onclick = closePanel;
                 const warning = $d.querySelector('.warn-txt') || $d.querySelector('.continue-study')
                 const warns = ["已開啟結課", "本课程已结课", "已开启结课"]
                 let jkdata = GM_getValue('jkdata', {})
@@ -1893,10 +1903,9 @@
                 let tkToken = courseAccess.getDisplayToken()
                 $d.querySelector("#token").value = tkToken
                 $d.querySelector("#token").type = getTkToken() ? 'password' : 'text';
-                const pannel = div;
                 const tokentip = $d.querySelector('#tokentip')
                 $d.querySelector('#dosk').addEventListener('click', async () => {
-                    pannel.style.display = 'none';
+                    closePanel();
                     let jumpUrl
                     if (newVersion) {
                         jumpUrl = entrance($w.ServerHost?.mooc1Domain || $w.location.origin)
@@ -1915,7 +1924,7 @@
                         }
                         if (nowtime - pageTime > 5184000) {
                             await new Promise((a, b) => {
-                                $layer('因为浏览器安全措施升级，如果刷章节页面提示“该内容已删除”，请按照下图提示打开开关并刷新页面(不要在当前页面操作)<br><img style="border: 3px solid #333; border-radius: 4px;margin-top:10px;width:100%" src="data:' + mooc1img + '"><br><label><input type="checkbox" name="agreement" value="agreed" style="appearance: auto; -webkit-appearance: radio; display: inline-block;" onclick="if(this.checked){vhyrumeraibuy(true)}else{vhyrumeraibuy(false)}">不再提醒</label>', '提示', a)
+                                $layer('因为浏览器安全措施升级，如果刷章节页面提示“该内容已删除”，请按照下图提示打开开关并刷新页面(不要在当前页面操作)<br><img style="border: 3px solid #333; border-radius: 4px;margin-top:10px;width:100%" src="' + mooc1img + '"><br><label><input type="checkbox" name="agreement" value="agreed" style="appearance: auto; -webkit-appearance: radio; display: inline-block;" onclick="if(this.checked){vhyrumeraibuy(true)}else{vhyrumeraibuy(false)}">不再提醒</label>', '提示', a)
                             })
                         }
                     } catch (e) {
@@ -1945,17 +1954,17 @@
                     });
                 })
                 $d.querySelector('#doHomework').addEventListener('click', async () => {
-                    pannel.style.display = 'none';
+                    closePanel();
                     if (newVersion) $d.querySelector('.zy')?.click()
                     else $d.querySelector('.workTip')?.previousElementSibling?.click()
                 })
                 $d.querySelector('#doExam').addEventListener('click', async () => {
-                    pannel.style.display = 'none';
+                    closePanel();
                     if (newVersion) $d.querySelector('.ks')?.click()
                     else $d.querySelector('.testTip')?.previousElementSibling?.click()
                 })
                 $d.querySelector('#doxxcs').addEventListener('click', async () => {
-                    pannel.style.display = 'none';
+                    closePanel();
                     GM_setValue("doxxcs", true)
                     if (newVersion) {
                         const lis = [...$d.querySelectorAll("li")]
@@ -1966,20 +1975,8 @@
                         })
                     }
                 })
-                $d.querySelector('#canclesk').addEventListener('click', () => {
-                    pannel.style.display = 'none';
-                })
-                let awfawf = 0
-                $d.querySelector('#tokenTip').addEventListener('click', () => {
-                    let now = Math.round(new Date() / 1000)
-                    if (now - awfawf > 10) {
-                        awfawf = now
-                        ctk(tkToken)
-                    } else {
-                        tokentip.textContent = "请在题库网站登录后，进入接口接入创建 API Token；积分、会员每日剩余额度和到期时间可在脚本中刷新查看。"
-                        tokentip.style.display = 'block'
-                    }
-                })
+                $d.querySelector('#canclesk').addEventListener('click', closePanel);
+                $d.querySelector('#tokenTip').addEventListener('click', () => ctk(tkToken));
                 $d.querySelector('#saveToken').addEventListener('click', () => {
                     const stkToken = $d.querySelector('#token').value.trim();
                     try { courseAccess.saveToken(stkToken); }
@@ -2002,6 +1999,7 @@
                     }, 2000)
                     ctk(tkToken)
                 })
+                div.querySelector('#dosk').focus();
             });
     }
     // 刷章节页面
@@ -2054,6 +2052,8 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .yixue-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 4px 20px; }
 .yixue-brand { display: flex; align-items: center; gap: 11px; }
 .yixue-brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: #fff; background: var(--blue); box-shadow: 0 4px 10px #007aff20; font-size: 20px; font-weight: 650; }
+.yixue-brand-mark:has(img) { background:transparent; box-shadow:none; }
+.yixue-brand-mark img { display:block; width:100%; height:100%; object-fit:contain; border-radius:inherit; }
 .yixue-brand-name { font-size: 15px; font-weight: 650; letter-spacing: .3px; }
 .yixue-brand-subtitle { display: block; color: var(--secondary); font-size: 11px; margin-top: -1px; }
 .yixue-connection-status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid #dedfe5; border-radius: 999px; background: #ffffffa6; font-size: 12px; font-weight: 550; color: #686c76; }
@@ -2090,7 +2090,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .yixue-toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; transition: transform .2s; }
 .btn-primary .yixue-toggle-track { background: var(--blue); }
 .btn-primary .yixue-toggle-track::after { transform: translateX(12px); }
-#doRenwu { grid-column: 1 / -1; }
 .yixue-quiz-options { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); margin-top: 17px; padding-top: 16px; }
 .yixue-inline-label { font-size: 12px; color: var(--secondary); margin-right: 3px; }
 .yixue-quiz-options .btn { border-radius: 999px; min-height: 36px; padding: 7px 12px; font-size: 12px; }
@@ -2149,7 +2148,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
 .yixue-dashboard .alert .alertBody { padding: 12px 22px 22px; color: #717784; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
 .yixue-dashboard .alert .buttons { border-top: 1px solid var(--line); text-align: center; }
 .yixue-dashboard .alert .button { display: block; padding: 13px; color: var(--blue); font-weight: 600; cursor: pointer; }
-@media (min-width: 1200px) { .yixue-task-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } #doRenwu { grid-column: span 2; } }
+@media (min-width: 1200px) { .yixue-task-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .row > .col-6 { flex: 0 0 100%; max-width: 100%; } .container-fluid { max-width: 720px; padding: 22px 20px; } .yixue-page-heading { padding-bottom: 22px; } #result { height: 300px; } }
 @media (max-width: 560px) { .container-fluid { padding: 19px 16px; } .yixue-topbar { padding-bottom: 24px; } .yixue-brand-subtitle { display: none; } .yixue-connection-status { font-size: 10px; padding: 5px 9px; } .card { border-radius: 20px; margin-bottom: 14px; } .card-body { padding: 18px; } .yixue-card-caption { font-size: 10px; } .col-md-6 { flex: 0 0 100%; max-width: 100%; } .yixue-task-grid { gap: 8px; } .yixue-task-grid > .btn { padding: 10px; gap: 7px; font-size: 12px; } .yixue-task-grid > .btn > svg { width: 15px; } .yixue-stat { padding: 14px; } .yixue-page-subtitle { font-size: 12px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
@@ -2159,7 +2158,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
 <body translate="no" class="yixue-dashboard">
     <div class="container-fluid">
         <header class="yixue-topbar">
-            <div class="yixue-brand"><span class="yixue-brand-mark" aria-hidden="true">易</span><div><span class="yixue-brand-name">易学助手</span><span class="yixue-brand-subtitle">学习通课程助手</span></div></div>
+            <div class="yixue-brand"><span class="yixue-brand-mark" aria-hidden="true"><img src="https://yixue-cmg.pages.dev/assets/yixue-logo.png" alt="" referrerpolicy="no-referrer" /></span><div><span class="yixue-brand-name">易学助手</span><span class="yixue-brand-subtitle">学习通课程助手</span></div></div>
             <span class="yixue-connection-status" data-connected="false">本地模式</span>
         </header>
         <div class="yixue-page-heading"><div class="yixue-eyebrow">章节学习控制台</div><h1 id="courseName">课程名</h1><p class="yixue-page-subtitle">设置学习任务，查看课程进度。准备好后，点击启动。</p><h5 id="tra">Trying to do the best</h5></div>
@@ -2171,6 +2170,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                         <div class="yixue-task-grid">
                             <button type="button" id="doVideo" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/></svg>视频任务<span class="yixue-toggle-track" aria-hidden="true"></span></button>
                             <button type="button" id="doDocument" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></svg>文档任务<span class="yixue-toggle-track" aria-hidden="true"></span></button>
+                            <button type="button" id="doLive" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="13" rx="3"/><path d="m16 10 5-3v11l-5-3M7 3h5"/></svg>直播任务<span class="yixue-toggle-track" aria-hidden="true"></span></button>
                             <button type="button" id="doWork" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="17" rx="3"/><path d="M9 3h6v4H9zM8 13l2 2 6-5"/></svg>章节测试<span class="yixue-toggle-track" aria-hidden="true"></span></button>
                             <button type="button" id="doNoMission" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>非任务点<span class="yixue-toggle-track" aria-hidden="true"></span></button>
                             <button type="button" id="doRenwu" class="btn btn-light" role="switch" aria-checked="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-8 12h6l-1 8 9-12h-6z"/></svg>任务引擎<span class="yixue-toggle-track" aria-hidden="true"></span></button>
@@ -2200,8 +2200,8 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                 <section class="card">
                     <div class="card-body">
                         <div class="yixue-card-heading"><span class="yixue-section-icon" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19V9M12 19V4M19 19v-7"/></svg></span><h2 class="yixue-card-title">学习进度</h2><span class="yixue-card-caption">课程概览</span></div>
-                        <div class="yixue-stats"><div class="yixue-stat"><span class="yixue-stat-label">全部章节</span><strong id="totalNum" class="yixue-stat-value">-</strong><span class="yixue-stat-unit">章</span></div><div class="yixue-stat"><span class="yixue-stat-label">剩余章节</span><strong id="leftNum" class="yixue-stat-value accent">-</strong><span class="yixue-stat-unit">章</span></div></div>
-                        <div class="yixue-progress-heading"><span>当前任务进度</span><span id="yixueProgressValue">0%</span></div><div class="progress"><div class="progress-bar" id="jdbar" role="progressbar" aria-label="当前任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><p class="yixue-progress-note">进度仅供参考，任务状态以下方日志为准。</p>
+                        <div class="yixue-stats"><div class="yixue-stat"><span class="yixue-stat-label">本次章节</span><strong id="totalNum" class="yixue-stat-value">-</strong><span class="yixue-stat-unit">章</span></div><div class="yixue-stat"><span class="yixue-stat-label">未确认章节</span><strong id="leftNum" class="yixue-stat-value accent">-</strong><span class="yixue-stat-unit">章</span></div></div>
+                        <div class="yixue-progress-heading"><span>当前任务进度</span><span id="yixueProgressValue">0%</span></div><div class="progress"><div class="progress-bar" id="jdbar" role="progressbar" aria-label="当前任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:0%">0%</div></div><p class="yixue-progress-note">未确认章节包含跳过、失败和待核实任务；请回学习通核对最终进度。</p>
                     </div>
                 </section>
                 <section class="card">
@@ -2245,6 +2245,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             }
             const doVideoButton = $d.querySelector('#doVideo'),
                 doDocumentButton = $d.querySelector('#doDocument'),
+                doLiveButton = $d.querySelector('#doLive'),
                 doWorkButton = $d.querySelector('#doWork'),
                 autoSubmitButton = $d.querySelector('#autoSubmit'),
                 saveConfigButton = $d.querySelector('#saveConfig'),
@@ -2282,6 +2283,13 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                 let s = doDocumentButton.getAttribute('class').includes('light');
                 GM_setValue('doDocument', (() => { return s && ((() => { doDocumentButton.setAttribute('class', 'btn btn-primary'); $w.logs.addLog('将会处理文档任务', 'green'); return true; })()) || ((() => { doDocumentButton.setAttribute('class', 'btn btn-light'); $w.logs.addLog('将不会处理文档任务', 'red'); return false; })()) })());
             }
+            doLiveButton.onclick = function () {
+                if ($w.chuangguan) { $w.logs.addLog('闯关模式下禁止操作', 'red'); return; }
+                const enabled = doLiveButton.classList.contains('btn-light');
+                GM_setValue('doLive', enabled);
+                doLiveButton.className = enabled ? 'btn btn-primary' : 'btn btn-light';
+                $w.logs.addLog(enabled ? '将会处理直播任务' : '将不会处理直播任务', enabled ? 'green' : 'red');
+            };
             doWorkButton.onclick = function () {
                 if ($w.chuangguan && GM_getValue('doWork', false)) {
                     $w.logs.addLog('闯关模式下禁止操作', 'red');
@@ -2340,47 +2348,46 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                     ctk(tkToken)
                 }
             }
-            startButton.onclick = function () {
-                startButton.setAttribute('class', 'btn btn-light');
-                startButton.innerHTML = startNewButton.innerHTML = '任务已启动';
-                startButton.onclick = startNewButton.onclick = () => {
-                    $layer('如需停止任务，请刷新页面');
+            let courseRunning = false;
+            const launchTasks = async challenge => {
+                if (courseRunning) return;
+                courseRunning = true;
+                $w.chuangguan = challenge;
+                if (challenge) {
+                    $layer('闯关模式将自动开启所有任务类型<br>遇到无法作答或尚未提交的任务，请先在学习通页面处理后重试。');
+                    for (const [key, button] of [['doVideo', doVideoButton], ['doDocument', doDocumentButton], ['doWork', doWorkButton], ['doLive', doLiveButton]]) {
+                        GM_setValue(key, true);
+                        button.classList.remove('btn-light');
+                        button.classList.add('btn-primary');
+                        button.setAttribute('aria-checked', 'true');
+                    }
+                    $w.logs.addLog('视频、文档、章节测试、直播任务已开启', 'green');
                 }
-                startButton.id = startNewButton.id = "abaaba";
-                start();
+                startButton.disabled = startNewButton.disabled = true;
+                startButton.textContent = startNewButton.textContent = challenge ? '闯关任务运行中' : '任务运行中';
                 $w.logs.addLog('开始查询任务');
-            }
-            startNewButton.onclick = function () {
-                $layer('闯关模式将自动开启所有任务类型<br>建议调低答题正确率<br>遇到无法作答的题型与任务点将会自动终止');
-                GM_setValue('doVideo', true);
-                GM_setValue('doDocument', true);
-                GM_setValue('doWork', true);
-                $w.logs.addLog('视频、文档、章节测试任务已开启，如需重置，请刷新页面', 'green');
-                startNewButton.setAttribute('class', 'btn btn-light');
-                startNewButton.innerHTML = startButton.innerHTML = '闯关任务已启动';
-                startButton.onclick = startNewButton.onclick = () => {
-                    $layer('如需停止任务，请刷新页面');
+                try {
+                    await start();
+                } catch (error) {
+                    $w.logs.addLog('任务运行失败：' + escapeText(error?.message || '未知错误') + '。处理后可点击启动重试。', 'red');
+                } finally {
+                    cleanupCourseRun();
+                    courseRunning = false;
+                    $w.chuangguan = false;
+                    startButton.disabled = startNewButton.disabled = false;
+                    startButton.textContent = '启动 / 重试';
+                    startNewButton.textContent = '闯关模式';
                 }
-                startButton.id = startNewButton.id = "abaaba";
-                start();
-                $w.chuangguan = true;
-                $w.logs.addLog('开始查询任务');
-            }
-            let safeafew = 0
-            ciuuqButton.onclick = function () {
-                let now = Math.round(new Date() / 1000)
-                if (now - safeafew > 10) {
-                    safeafew = now
-                    ctk(tkToken)
-                } else {
-                    $layer("请到题库网站的接口接入创建 API Token；积分和会员额度可在脚本中刷新查看；充值记录请到题库网站查看。");
-                }
-            }
+            };
+            startButton.onclick = () => launchTasks(false);
+            startNewButton.onclick = () => launchTasks(true);
+            ciuuqButton.onclick = () => ctk(tkToken);
             wicButton.onclick = function () {
                 $layer('<p style="text-indent: 2em;">如果您的课程章节学完一节才能解锁下一节，不能跳过，那么这门课就是闯关模式，必须点击闯关模式按钮才能进行刷课</p>')
             }
             doVideoButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doVideo', 1) + 0]);
             doDocumentButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doDocument', 1) + 0]);
+            doLiveButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doLive', 1) + 0]);
             doWorkButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doWork', 1) + 0]);
             autoSubmitButton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('autoSubmit', 1) + 0]);
             AIbutton.setAttribute('class', ['btn btn-light', 'btn btn-primary'][GM_getValue('doAI', false) + 0]);
@@ -2399,15 +2406,57 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             $w.logs.addLog('脚本初始化成功，点击启动按钮开始刷课', 'green');
             if (!getTkToken()) $w.logs.addLog('本地随机 Token 未连接题库，视频、文档可先使用；章节答题将跳过，请填写题库 Token 后再启用。', '#b7791f');
         }
+        let cleanupCourseRun = () => {};
         async function start() {
+            cleanupCourseRun();
+            const cleanups = [];
+            let runActive = true;
+            cleanupCourseRun = () => {
+                runActive = false;
+                for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch { } }
+            };
+            // 只提取 mArg 的 JSON 对象，不执行卡片页面中的任何脚本。
+            const parseCardData = source => {
+                const text = String(source || '');
+                const assignment = /\bmArg\s*=\s*/g;
+                const match = assignment.exec(text);
+                if (!match) throw new Error('章节数据中缺少 mArg');
+                const begin = assignment.lastIndex;
+                if (/^\$mArg\b\s*;?/.test(text.slice(begin))) return null;
+                if (text[begin] !== '{') throw new Error('章节 mArg 不是有效 JSON 对象');
+                let depth = 0, quoted = false, escaped = false;
+                for (let index = begin; index < text.length; index++) {
+                    const character = text[index];
+                    if (quoted) {
+                        if (escaped) escaped = false;
+                        else if (character === '\\') escaped = true;
+                        else if (character === '"') quoted = false;
+                        continue;
+                    }
+                    if (character === '"') quoted = true;
+                    else if (character === '{') depth++;
+                    else if (character === '}' && --depth === 0) {
+                        let parsed;
+                        try { parsed = JSON.parse(text.slice(begin, index + 1)); }
+                        catch { throw new Error('章节 mArg JSON 数据损坏'); }
+                        if (!parsed || !parsed.defaults || typeof parsed.defaults !== 'object' || Array.isArray(parsed.defaults) || !Array.isArray(parsed.attachments)) {
+                            throw new Error('章节 mArg 缺少有效的 defaults 或 attachments');
+                        }
+                        return parsed;
+                    }
+                }
+                throw new Error('章节 mArg JSON 数据不完整');
+            };
             //如果用户给单个账号同时刷多门课（每个人都想这么做）就会被清空所有课程的进度，为了防止这种情况发生，添加检测，在刷视频时更新localstorage，触发其他页面的addEventListener
             let multipleTold = false
-            $w.addEventListener('storage', (event) => {
-                if (!multipleTold && event.key == $uid && event.newValue != courseId) {
+            const storageListener = event => {
+                if (!multipleTold && event.key == $uid && event.newValue != ($s['courseid'] || $s['courseId'])) {
                     $layer("每个账号同时只能刷一门课，单个账号同时刷多门课会导致所有刷的课被清空进度！")
                     multipleTold = true
                 }
-            })
+            };
+            $w.addEventListener('storage', storageListener);
+            cleanups.push(() => $w.removeEventListener('storage', storageListener));
             if ($d.querySelector("#tra").innerHTML != "Trying to do the best") {
                 $layer("请关闭网页翻译功能，否则将无法查题<br>（将外语题翻译为中文会0分）")
             }
@@ -2466,11 +2515,28 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             jk && ($d.getElementById('courseName').innerHTML += '（已结课）')
             audioPlayer.loop = true;
             $w.audioPlayer = audioPlayer;
-            $d.addEventListener('visibilitychange', function () {
-                var c = 0;
+            const originalTitle = $d.title;
+            let titleTimer, backgroundWarning = false;
+            const visibilityListener = () => {
+                clearInterval(titleTimer);
+                titleTimer = undefined;
+                if (!runActive) return;
+                let c = 0;
                 if ($d.hidden) {
-                    audioPlayer.play();
-                    var timer = setInterval(function () {
+                    const warnBackground = () => {
+                        if (runActive && !backgroundWarning) {
+                            backgroundWarning = true;
+                            logs.addLog('浏览器未允许后台音频，请保持窗口可见并检查任务日志。', '#946200');
+                        }
+                    };
+                    try { audioPlayer.play()?.catch(warnBackground); } catch { warnBackground(); }
+                    titleTimer = setInterval(function () {
+                        if (!runActive || !$d.hidden) {
+                            clearInterval(titleTimer);
+                            titleTimer = undefined;
+                            $d.title = originalTitle;
+                            return;
+                        }
                         if (c) {
                             $d.title = '🙈挂机中';
                             c = 0;
@@ -2478,16 +2544,23 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                             $d.title = '🙉挂机中';
                             c = 1;
                         }
-                        if (!$d.hidden) {
-                            clearInterval(timer);
-                            $d.title = '超星刷课工具';
-                        }
                     }, 1300);
                 } else {
                     audioPlayer.pause();
+                    $d.title = originalTitle;
                 }
-            })
+            };
+            $d.addEventListener('visibilitychange', visibilityListener);
+            cleanups.push(() => {
+                $d.removeEventListener('visibilitychange', visibilityListener);
+                clearInterval(titleTimer);
+                $d.title = originalTitle;
+                audioPlayer.pause();
+                if ($w.audioPlayer === audioPlayer) delete $w.audioPlayer;
+            });
             $w.need = false;
+            const taskOutcomes = [];
+            let chapterIssues = 0;
             let pointList = [],
                 pointNum = 0,
                 detailUrl = $siteHost + '/mycourse/studentstudycourselist?courseId=' + courseId + '&clazzid=' + classId + '&mooc2=1',
@@ -2507,35 +2580,31 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                     }
                     return encData;
                 };
+            if (!detailResult || typeof detailResult.responseText !== 'string') {
+                throw new Error('获取课程目录失败，请检查学习通登录状态和网络');
+            }
             $d.getElementById('detail').innerHTML = detailResult.responseText;
             if (GM_getValue('doRenwu', false)) {
                 logs.addLog('开始查询任务引擎');
+                const readTaskJson = async url => {
+                    const result = await request({ url });
+                    if (!result) return false;
+                    try { return JSON.parse(result.responseText); }
+                    catch { logs.addLog('任务引擎返回了无法解析的数据，此任务未执行。', 'red'); return false; }
+                };
                 let renwuyinqing = `https://mobilelearn.chaoxing.com/v2/apis/active/getData?DB_STRATEGY=DEFAULT&courseId=${courseId}&classId=${classId}`,
-                    renwu = await brequest({ 'url': renwuyinqing });
+                    renwu = await readTaskJson(renwuyinqing);
                 if (renwu) {
                     try {
                         for (let mission of renwu.data) {
                             try {
                                 await sleep(200)
-                                let encryTaskUserId = await new Promise((a, b) => {
-                                    GM_xmlhttpRequest({
-                                        method: "HEAD",
-                                        url: `https://task.chaoxing.com/api/v1/middlePageApi/jumpStudyPlanList?taskId=${mission.id}&moocClassId=${classId}`,
-                                        onload: function (response) {
-                                            const url = new URL(response.finalUrl);
-                                            const params = url.searchParams;
-                                            const encryTaskUserId = params.get('encryTaskUserId')
-                                            a(encryTaskUserId)
-                                        },
-                                        onerror: function (err) {
-                                            a(false)
-                                        }
-                                    });
-                                })
+                                const jumpStudy = await request({ method: 'HEAD', url: `https://task.chaoxing.com/api/v1/middlePageApi/jumpStudyPlanList?taskId=${encodeURIComponent(mission.id)}&moocClassId=${encodeURIComponent(classId)}` });
+                                const encryTaskUserId = jumpStudy?.finalUrl ? new URL(jumpStudy.finalUrl, $l).searchParams.get('encryTaskUserId') : null;
                                 if (!encryTaskUserId) {
                                     continue
                                 }
-                                let messionDetial = await brequest({ 'url': `https://task.chaoxing.com/userStudyPlan/getUserStandard?encryTaskUserId=${encryTaskUserId}` })
+                                let messionDetial = await readTaskJson(`https://task.chaoxing.com/userStudyPlan/getUserStandard?encryTaskUserId=${encodeURIComponent(encryTaskUserId)}`);
                                 if (!messionDetial) {
                                     continue
                                 }
@@ -2543,21 +2612,8 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                     try {
                                         if (missionDetail?.plan?.planType == 1 && missionDetail?.finish == 0 && missionDetail?.plan?.externalDataId) {
                                             await sleep(200)
-                                            let chapterId = await new Promise((a, b) => {
-                                                GM_xmlhttpRequest({
-                                                    method: "GET",
-                                                    url: `https://mooc2-ans.chaoxing.com/mooc2-ans/coursetopic/topicdetailsmiddle?taskEngine=true&courseid=${courseId}&clazzid=${classId}&cpi=${$s['cpi']}&topicid=${missionDetail.plan.externalDataId}&ut=s`,
-                                                    onload: function (response) {
-                                                        const url = new URL(response.finalUrl);
-                                                        const params = url.searchParams;
-                                                        const chapterId = params.get('chapterId')
-                                                        a(chapterId)
-                                                    },
-                                                    onerror: function (err) {
-                                                        a(false)
-                                                    }
-                                                });
-                                            })
+                                            const topic = await request({ url: `https://mooc2-ans.chaoxing.com/mooc2-ans/coursetopic/topicdetailsmiddle?taskEngine=true&courseid=${courseId}&clazzid=${classId}&cpi=${$s['cpi'] || ''}&topicid=${encodeURIComponent(missionDetail.plan.externalDataId)}&ut=s` });
+                                            const chapterId = topic?.finalUrl ? new URL(topic.finalUrl, $l).searchParams.get('chapterId') : null;
                                             if (!chapterId) {
                                                 continue
                                             }
@@ -2578,7 +2634,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                         logs.addLog(`共有${pointList.length}个任务引擎知识点任务`);
                     }
                 } else {
-                    logs.addLog('任务引擎没有任务');
+                    logs.addLog('任务引擎请求失败，未能确认任务；仍将检查章节目录。', '#946200');
                 }
             } else {
                 await sleep(1000);
@@ -2595,7 +2651,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             if (GM_getValue('doNoMission', false)) {
                 logs.addLog('您开启了“非任务点”功能，程序的运行时间可能比平时更长，请耐心等待', 'orange');
                 let page = 0
-                while (++page) {
+                while (++page <= 100) {
                     let noMissionUrl = $siteHost.replace('mooc1.', 'stat2-ans.').replace('mooc.', 'stat2-ans.') + '/stat2/chapter-exam/s/tests/data?clazzid=' + classId + '&courseid=' + courseId + '&ut=s&page=' + page + '&pageSize=200'
                     try {
                         let noMissionResult = await request({ 'url': noMissionUrl }),
@@ -2613,9 +2669,15 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                             break
                         }
                     } catch (e) {
+                        chapterIssues++;
+                        logs.addLog('非任务点列表读取失败，部分任务未能检查，请稍后重试。', 'red');
                         console.log(e);
                         break
                     }
+                }
+                if (page > 100) {
+                    chapterIssues++;
+                    logs.addLog('非任务点列表达到 100 页上限，分页已停止；请在学习通核对剩余任务。', '#946200');
                 }
 
             }
@@ -2630,12 +2692,16 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             if ($w.chuangguan) {
                 logs.addLog('闯关模式每个章节等待时间可能会稍长，请耐心等待', 'orange');
             }
-            pointNum++;
             function* point() {
                 for (let i = 0, l = pointList.length; i < l; i++) {
-                    pointNum--;
-                    $d.getElementById('leftNum').innerHTML = pointNum;
+                    const firstTask = taskOutcomes.length;
+                    const issuesBefore = chapterIssues;
                     yield pointList[i];
+                    const chapterTasks = taskOutcomes.slice(firstTask);
+                    if (chapterTasks.length > 0 && chapterIssues === issuesBefore && chapterTasks.every(task => task.status === 'confirmed')) {
+                        pointNum--;
+                    }
+                    $d.getElementById('leftNum').textContent = String(pointNum);
                 }
             }
             let getPoint = point()
@@ -2643,14 +2709,14 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
             while (1) {
                 let g = getPoint.next();
                 if (g.done) {
-                    logs.addLog('所有任务已完成（如果您的课程并没有完成，请检查是否为闯关任务点，如果是，请刷新页面并点击“闯关模式”按钮进行刷课）');
+                    const count = status => taskOutcomes.filter(task => task.status === status).length;
+                    logs.addLog(`任务遍历结束：已确认完成 ${count('confirmed')} 项，跳过 ${count('skipped')} 项，失败 ${count('failed')} 项，待核实 ${count('pending')} 项${chapterIssues ? `，另有 ${chapterIssues} 个章节读取异常` : ''}。请回到学习通核对最终进度。`, '#946200');
                     if ($w.need) {
-                        logs.addLog('将进行第二次循环');
-                        start();
+                        logs.addLog('部分任务需要再次检查，请核对进度后点击启动重试。', '#946200');
                     }
                     break;
                 }
-                let chapterId = g.value, page = 0;
+                let chapterId = g.value, page = 0, emptyPages = 0;
                 try {
                     let nowHour = new Date().getHours();
                     if (nowHour < 6 && !$w.told) {
@@ -2663,6 +2729,11 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                 }
                 while (1) {
                     try {
+                        if (page >= 200) {
+                            chapterIssues++;
+                            logs.addLog('本章节达到 200 页扫描上限，已停止，请人工核对剩余任务后重试。', '#946200');
+                            continue loopPoint;
+                        }
                         while (1) {
                             if (!$w.wait) {
                                 break;
@@ -2672,7 +2743,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                         await sleep($n(1, 4));
                         let cardUrl = '/knowledge/cards?clazzid=' + classId + '&courseid=' + courseId + '&knowledgeid=' + chapterId + '&num=' + page + '&ut=s&cpi=' + cpi + '&v=20160407-1',
                             Referer = $siteHost + '/mycourse/studentstudy?chapterId=' + chapterId + '&courseId=' + courseId + '&clazzid=' + classId + '&cpi=' + cpi + '&enc=' + randomString() + '&mooc2=1&openc=' + randomString();
-                        cardResult = await request({
+                        const cardResult = await request({
                             'headers': {
                                 'Referer': Referer
                             },
@@ -2680,26 +2751,37 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                         });
                         page++;
                         if (!cardResult) {
+                            chapterIssues++;
+                            logs.addLog('获取章节内容失败，本章节未执行；检查网络后可点击启动重试。', 'red');
                             continue loopPoint;
                         }
-                        if (cardResult.responseText.includes('mArg = $mArg;')) {
+                        let mArgJson;
+                        try { mArgJson = parseCardData(cardResult.responseText); }
+                        catch (error) {
+                            chapterIssues++;
+                            logs.addLog('解析章节内容失败：' + escapeText(error.message) + '。请重新进入课程后点击启动重试。', 'red');
+                            continue loopPoint;
+                        }
+                        if (!mArgJson) {
                             await sleep(1);
                             continue loopPoint;
                         }
-                        let mArgs = cardResult.responseText.match(/mArg([\x00-\x1F\x7F]|\s)*=([\x00-\x1F\x7F]|\s)*(.+);([\x00-\x1F\x7F]|\s)*}([\x00-\x1F\x7F]|\s)*catch\(e\)/);
-                        if (!mArgs) {
-                            if ($w.chuangguan) {
-                                logs.addLog('无法获取章节内容，请检查上一章节是否已完成，是否有未提交的章节测试', 'red');
-                            } else {
-                                logs.addLog('无法获取章节内容，章节可能未开放', 'red');
+                        if (mArgJson.attachments.length === 0) {
+                            if (++emptyPages >= 10) {
+                                chapterIssues++;
+                                logs.addLog('本章节连续 10 页为空任务数据，已停止扫描，请在学习通核对后重试。', '#946200');
+                                continue loopPoint;
                             }
-                            continue loopPoint;
+                            continue;
                         }
-                        let mArg = mArgs[0].replace(/mArg([\x00-\x1F\x7F]|\s)*=([\x00-\x1F\x7F]|\s)*/, '').replace(/;([\x00-\x1F\x7F]|\s)*}([\x00-\x1F\x7F]|\s)*catch\(e\)/, ''),
-                            mArgJson = JSON.parse(mArg),
-                            reportUrl = mArgJson.defaults.reportUrl;
+                        emptyPages = 0;
+                        const reportUrl = mArgJson.defaults.reportUrl;
                         $fid = $fid || mArgJson.defaults['fid'] || '666'
+                        if (!$uid || !/^[1-9]\d*$/.test(String($uid))) {
+                            $uid = mArgJson.defaults['userid'];
+                        }
                         for (let i = 0, l = mArgJson.attachments.length; i < l; i++) {
+                            let outcome, nowBar, barr;
                             try {
                                 while (1) {
                                     if (!$w.wait) {
@@ -2708,23 +2790,46 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                     await sleep(500);
                                 }
                                 let jobData = mArgJson.attachments[i];
+                                if (!jobData || typeof jobData !== 'object' || Array.isArray(jobData)) {
+                                    taskOutcomes.push({ status: 'failed' });
+                                    logs.addLog('章节任务数据无效，已跳过此项并继续其他任务。', 'red');
+                                    continue;
+                                }
                                 if (!jobData.job) {
                                     if (jobData.type == 'workid' && GM_getValue('doNoMission', false)) {
                                         console.log('有非任务点');
                                     } else {
                                         continue;
                                     }
-                                } try {
+                                }
+                                outcome = { status: 'pending' };
+                                taskOutcomes.push(outcome);
+                                if (!jobData.property || typeof jobData.property !== 'object' || Array.isArray(jobData.property)) {
+                                    outcome.status = 'failed';
+                                    logs.addLog('章节任务缺少有效属性，已跳过此项并继续其他任务。', 'red');
+                                    continue;
+                                }
+                                try {
                                     if (jobData.property.module == 'insertbook') {
                                         jobData.type = 'book';
                                         jobData.property.name = jobData.property.bookname;
                                     }
                                 } catch (e) { }
-                                let nowBar, barr;
+                                if (typeof jobData.type !== 'string' || !jobData.type) {
+                                    outcome.status = 'failed';
+                                    logs.addLog('章节任务缺少有效类型，已跳过此项并继续其他任务。', 'red');
+                                    continue;
+                                }
+                                if (['video', 'live', 'chaoxingClass'].includes(jobData.type) && GM_getValue(jobData.type === 'video' ? 'doVideo' : 'doLive', true) && !/^[1-9]\d*$/.test(String($uid || ''))) {
+                                    outcome.status = 'failed';
+                                    logs.addLog('无法获取有效学习通用户 ID，本任务未执行，请重新登录后重试。', 'red');
+                                    continue;
+                                }
                                 loopType:
                                 switch (jobData.type) {
                                     case 'video':
                                         if (!GM_getValue('doVideo', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.name, 'red');
                                             break;
                                         }
@@ -2743,6 +2848,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             fastforward = jobData.property.fastforward || "false",
                                             allowBs = false
                                         if (!videoInfoResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('获取视频信息失败，跳过此任务：' + jobData.property.name, 'red');
                                             break loopType;
                                         }
@@ -2752,21 +2858,28 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                         let videojs_id = String(parseInt($n(1000, 9999))),
                                             videoInfo = JSON.parse(videoInfoResult.responseText);
                                         if (videoInfo.status != "success") {
+                                            outcome.status = 'failed';
                                             logs.addLog('视频还没有准备好，跳过此任务：' + jobData.property.name, 'red');
                                             break loopType;
                                         }
-                                        if (!videoInfo.duration) {//老师上传的视频长度小于1秒，就会出现此问题
+                                        videoInfo.duration = Number(videoInfo.duration);
+                                        if (!Number.isFinite(videoInfo.duration) || videoInfo.duration <= 0) {
+                                            outcome.status = 'failed';
                                             logs.addLog('异常视频，无法完成：' + jobData.property.name, 'red');
+                                            break loopType;
+                                        }
+                                        if (typeof reportUrl !== 'string' || !reportUrl || !videoInfo.dtoken || !videoInfo.objectid) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('视频进度信息不完整，本任务未执行，请重新进入课程后重试。', 'red');
                                             break loopType;
                                         }
                                         logs.addLog('开始刷视频：' + jobData.property.name)
                                         let dtype = 'Video'
-                                        if (jobData.property.module.includes('audio') || jobData.property.module.includes('voice')) {
+                                        if (/audio|voice/.test(String(jobData.property.module || ''))) {
                                             dtype = 'Audio'
                                         }
                                         let videoDatas = getEnc(attDuration, attDurationEnc, videoFaceCaptureEnc, classId, $uid, jobData.jobid, videoInfo.objectid, videoInfo.duration, beisu, videoInfo.dtoken, jobData.otherInfo, jobData.property.rt || '0.9', dtype),
                                             errTimes = 0,
-                                            hasErr = false,
                                             min = 0,
                                             totalMin = parseFloat((videoInfo.duration / 60).toFixed(2));
                                         if (是否启用后台服务器 == '1') {
@@ -2807,9 +2920,6 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                         }, 10000);
                                         $d.cookie = 'videojs_id=' + videojs_id + ';path=/';
                                         for (let i = 0, l = videoDatas.length; i < l; i++) {
-                                            if (!hasErr) {
-                                                errTimes = 0
-                                            }
                                             while (1) {
                                                 if (!$w.wait) {
                                                     break;
@@ -2819,7 +2929,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             let url = videoDatas[i][0],
                                                 isdrag = videoDatas[i][1],
                                                 sendUrl = reportUrl + url;
-                                            watchResult = await request({
+                                            const watchResult = await request({
                                                 headers: {
                                                     'Referer': $protocol + $w.location.host + '/ananas/modules/video/index.html?v=' + videoV,
                                                     'Sec-Fetch-Site': 'same-origin'
@@ -2827,47 +2937,28 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 url: sendUrl
                                             })
                                             localStorage.setItem($uid, courseId)
-                                            if (!watchResult) {
-                                                if (errTimes > 2) {
-                                                    logs.addLog('上传视频进度失败超过三次，跳过此任务：' + jobData.property.name, 'red');
-                                                    clearInterval(barr);
-                                                    break loopType;
-                                                }
+                                            if (!watchResult || Number(watchResult.status) !== 200) {
                                                 errTimes++;
-                                                logs.addLog('上传视频进度失败，将再次重试' + String(3 - errTimes) + '次', 'red')
-                                                if (!hasErr) {
-                                                    i > 0 && i--
-                                                }
-                                                await sleep(3000)
-                                                hasErr = true
-                                                continue
-                                            } else if (watchResult.status != '200') {
-                                                if (jk) {
-                                                    logs.addLog('该课程已结课，视频任务无法完成', 'red');
+                                                if (errTimes >= 3) {
+                                                    outcome.status = 'failed';
+                                                    logs.addLog('上传视频进度连续失败三次，停止此任务：' + jobData.property.name, 'red');
                                                     clearInterval(barr);
                                                     break loopType;
                                                 }
-                                                if (errTimes > 2) {
-                                                    logs.addLog('上传视频进度失败超过三次，跳过此任务：' + jobData.property.name, 'red');
-                                                    clearInterval(barr);
-                                                    break loopType;
-                                                }
-                                                errTimes++;
-                                                logs.addLog('超星返回错误信息，将再次重试' + String(3 - errTimes) + '次', 'red')
-                                                if (!hasErr) {
-                                                    i > 0 && i--
-                                                }
-                                                await sleep(3000)
-                                                hasErr = true
-                                                continue
+                                                logs.addLog('上传视频进度失败，将重试当前进度，剩余 ' + String(3 - errTimes) + ' 次。', 'red');
+                                                i--;
+                                                await sleep(3000);
+                                                continue;
                                             }
-                                            hasErr = false
+                                            errTimes = 0;
                                             let watchResultJson = JSON.parse(watchResult.responseText);
-                                            if (watchResultJson.isPassed) {
+                                            if (watchResultJson.isPassed === true) {
+                                                outcome.status = 'confirmed';
                                                 logs.addLog('视频任务完成：' + jobData.property.name, 'green');
                                                 clearInterval(barr);
                                                 break loopType;
                                             } else if (isdrag == '4') {
+                                                outcome.status = 'failed';
                                                 logs.addLog('视频已观看完毕，但视频任务未完成：' + jobData.property.name, 'red');
                                                 clearInterval(barr);
                                                 break loopType;
@@ -2883,6 +2974,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 }
                                                 let left = Math.ceil(totalMin / beisu - min)
                                                 if (left < -1) {
+                                                    outcome.status = 'failed';
                                                     logs.addLog('视频已观看完毕，但视频任务未完成：' + jobData.property.name, 'red');
                                                     clearInterval(barr);
                                                     break loopType;
@@ -2918,6 +3010,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                         }
                                     case 'document':
                                         if (!GM_getValue('doDocument', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.name, 'red');
                                             break;
                                         }
@@ -2928,15 +3021,18 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 '&knowledgeid=' + chapterId + '&courseid=' + courseId + '&clazzid=' + classId + '&jtoken=' + jobData.jtoken
                                         });
                                         if (!doDocumentResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('阅读文档失败：' + jobData.property.name, 'red');
                                             break;
                                         }
                                         try {
                                             let doDocumentJson = JSON.parse(doDocumentResult.responseText);
                                             if (doDocumentJson.status) {
+                                                outcome.status = 'confirmed';
                                                 logs.addLog('文档任务完成：' + jobData.property.name, 'green');
                                                 break;
                                             } else {
+                                                outcome.status = 'failed';
                                                 if (jk) {
                                                     logs.addLog('该课程已结课，文档任务无法完成', 'red');
                                                 } else {
@@ -2945,15 +3041,18 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 break;
                                             }
                                         } catch (e) {
+                                            outcome.status = 'failed';
                                             logs.addLog('解析文档内容失败：' + jobData.property.name, 'red');
                                             break;
                                         }
                                     case 'workid':
                                         if (!getTkToken()) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('题库未连接，跳过章节答题：' + escapeText(jobData.property.title || '章节测试'), '#b7791f');
                                             break;
                                         }
                                         if (!GM_getValue('doWork', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.title, 'red');
                                             break;
                                         }
@@ -3332,19 +3431,21 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                         let score = checkedQuestionNum / questionNum * 100;
                                         await sleep($n(2, 4));
                                         if (score >= vgqtlv && !!GM_getValue('autoSubmit', 1)) {
-                                            logs.addLog('正确率达标，自动提交');
+                                            logs.addLog('正确率达标，已发起自动提交，请回到学习通确认提交结果。');
                                             $pw.toadd();
                                             $pw.submitAction();
                                         } else if (score > 0) {
                                             logs.addLog(['未设置自动提交', '正确率不达标：' + String(Math.floor(score)) + '分'][GM_getValue('autoSubmit', 1) + 0] + '，自动保存');
                                             $pw.noSubmit();
                                         } else {
+                                            outcome.status = 'skipped';
                                             logs.addLog('一道题都没查出来，跳过');
                                         }
                                         await sleep($n(2, 4));
                                         break;
                                     case 'book':
                                         if (!GM_getValue('doDocument', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.name, 'red');
                                             break;
                                         }
@@ -3355,24 +3456,29 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 '&knowledgeid=' + chapterId + '&courseid=' + courseId + '&clazzid=' + classId + '&jtoken=' + jobData.jtoken
                                         });
                                         if (!bookResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('阅读图书失败：' + jobData.property.name, 'red');
                                             break;
                                         }
                                         try {
                                             let doDocumentJson = JSON.parse(bookResult.responseText);
                                             if (doDocumentJson.status) {
+                                                outcome.status = 'confirmed';
                                                 logs.addLog('图书任务完成：' + jobData.property.name, 'green');
                                                 break;
                                             } else {
+                                                outcome.status = 'failed';
                                                 logs.addLog('图书任务失败：' + jobData.property.name, 'red');
                                                 break;
                                             }
                                         } catch (e) {
+                                            outcome.status = 'failed';
                                             logs.addLog('解析图书内容失败：' + jobData.property.name, 'red');
                                             break;
                                         }
                                     case 'hyperlink':
                                         if (!GM_getValue('doDocument', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.title, 'red');
                                             break;
                                         }
@@ -3383,39 +3489,51 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 '&knowledgeid=' + chapterId + '&courseid=' + courseId + '&clazzid=' + classId + '&jtoken=' + jobData.jtoken
                                         });
                                         if (!linkResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('阅读链接失败：' + jobData.property.title, 'red');
                                             break;
                                         }
                                         try {
                                             let doLinkJson = JSON.parse(linkResult.responseText);
                                             if (doLinkJson.status) {
+                                                outcome.status = 'confirmed';
                                                 logs.addLog('链接任务完成：' + jobData.property.title, 'green');
                                                 break;
                                             } else {
+                                                outcome.status = 'failed';
                                                 logs.addLog('链接任务失败：' + jobData.property.title, 'red');
                                                 break;
                                             }
                                         } catch (e) {
+                                            outcome.status = 'failed';
                                             logs.addLog('解析链接内容失败：' + jobData.property.title, 'red');
                                             break;
                                         }
                                     case 'live':
-                                        if (!GM_getValue('doVideo', true)) {
+                                        if (!GM_getValue('doLive', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过直播任务：' + jobData.property.title, 'red');
                                             break;
                                         }
                                         logs.addLog('开始直播任务：' + jobData.property.title)
-                                        let oldLiveId = liveId = jobData.property['liveId']
+                                        let oldLiveId = jobData.property['liveId'], liveId = oldLiveId;
+                                        if (!liveId) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('直播任务缺少直播标识，无法执行。', 'red');
+                                            break;
+                                        }
                                         if (liveId.toString().length < 16) {
                                             let newIdResult = await request({
                                                 'url': '/ananas/live/getnewliveid?oliveid=' + liveId,
                                             })
                                             if (!newIdResult) {
+                                                outcome.status = 'failed';
                                                 logs.addLog('获取直播信息失败，请联系作者反馈', 'red');
                                                 break;
                                             }
                                             newIdResult = JSON.parse(newIdResult.responseText.replaceAll('\'', '"'));
                                             if (!newIdResult.newLiveId) {
+                                                outcome.status = 'failed';
                                                 logs.addLog('获取直播信息失败，请联系作者反馈', 'red');
                                                 break;
                                             }
@@ -3425,15 +3543,30 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             liveInfo = await request({
                                                 'url': liveUrl
                                             }),
-                                            rt = jobData.property.rt ? parseFloat(jobData.property['rt']) : 0.9;
+                                            rt = jobData.property.rt === undefined || jobData.property.rt === null || jobData.property.rt === '' ? 0.9 : Number(jobData.property.rt);
+                                        if (!Number.isFinite(rt) || rt <= 0 || rt > 1) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('直播完成比例无效，本任务未执行，请在学习通页面检查。', 'red');
+                                            break;
+                                        }
                                         if (!liveInfo) {
+                                            outcome.status = 'failed';
                                             logs.addLog('获取直播信息失败，请联系作者反馈', 'red');
                                             break;
                                         }
                                         liveInfo = JSON.parse(liveInfo.responseText);
-                                        let liveStatus = liveInfo['temp']['data']['liveStatus'],
-                                            ifReview = liveInfo['temp']['data']['ifReview'];
+                                        const liveData = liveInfo?.temp?.data;
+                                        const liveDuration = Number(liveData?.duration);
+                                        const watchedSeconds = Number(liveData?.timeLongValue ?? 0) * 60;
+                                        if (!liveData || !Number.isFinite(liveDuration) || liveDuration <= 0 || !Number.isFinite(watchedSeconds) || watchedSeconds < 0) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('直播时长或观看进度无效，本任务未执行，请在学习通页面检查。', 'red');
+                                            break;
+                                        }
+                                        let liveStatus = Number(liveData.liveStatus),
+                                            ifReview = Number(liveData.ifReview);
                                         if (liveStatus == 4 && ifReview == 1) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('直播不允许回看，无法完成', 'orange');
                                             break;
                                         }
@@ -3444,14 +3577,15 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             'url': href
                                         });
                                         if (!liveResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('获取直播详情失败，请联系作者反馈', 'orange');
                                             break;
                                         }
                                         let jiba = 1
                                         if (!liveResult.responseText.includes('lineVideo =')) {//旧版直播
-                                            let duration = liveInfo['temp']['data']['duration'],
-                                                timeLongValue = liveInfo['temp']['data']['timeLongValue'] * 60,
-                                                liveStatus = liveInfo['temp']['data']['liveStatus']
+                                            let duration = liveDuration,
+                                                timeLongValue = watchedSeconds,
+                                                liveStatus = Number(liveData.liveStatus);
                                             if (rt <= 0.9) {
                                                 duration = duration * (rt + 0.1);
                                             }
@@ -3477,7 +3611,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 reportR = await request({
                                                     'url': lreportUrl
                                                 });
-                                                if (reportR.responseText.includes('success')) {
+                                                if (reportR && reportR.responseText.includes('success')) {
                                                     if (jiba) {
                                                         logs.addLog(`${jobData.property.title}：已观看${(playTime / 60).toFixed(1)}分钟`)
                                                         jiba = 0
@@ -3485,11 +3619,13 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                         jiba = 1
                                                     }
                                                 } else {
+                                                    outcome.status = 'failed';
                                                     logs.addLog('观看进度上报失败：' + jobData.property.title, 'red')
+                                                    break;
                                                 }
                                                 if (playTime == duration) {
                                                     clearInterval(barr);
-                                                    logs.addLog('直播回放完成：' + jobData.property.title)
+                                                    logs.addLog('直播回放进度已上传，请回到学习通核对完成状态：' + jobData.property.title, '#946200')
                                                     break
                                                 }
                                                 playTime += 30
@@ -3501,10 +3637,11 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             break;
                                         } else {
                                             let lineinfoREGX = liveResult.responseText.match(/var\s*lineVideo\s*=\s+(.*?});\s*var/);
-                                            let videoPlayStartTimeREGX = liveResult.responseText.match(/var\s*videoPlayStartTime\s*=\s*([0-9]{1,4});/);
+                                            let videoPlayStartTimeREGX = liveResult.responseText.match(/var\s*videoPlayStartTime\s*=\s*([0-9]{1,10});/);
                                             let viewerUrlREGX = liveResult.responseText.match(/var\s*viewerUrl\s*=\s*('|")(.*?)('|");/);
                                             let uInfoREGX = liveResult.responseText.match(/var\s*uInfo\s*=\s*('|")([0-9a-z]{32})('|");/);
                                             if (!lineinfoREGX || !lineinfoREGX[1] || !videoPlayStartTimeREGX || !videoPlayStartTimeREGX[1] || !viewerUrlREGX || !viewerUrlREGX[2] || !uInfoREGX || !uInfoREGX[2]) {
+                                                outcome.status = 'failed';
                                                 logs.addLog('获取直播详情失败2，请联系作者反馈', 'orange');
                                                 break;
                                             }
@@ -3518,34 +3655,32 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             let viewerUrl = viewerUrlREGX[2]
                                             let duration = Number(lineinfo.videoLongtime)
                                             if (duration < 10) {
-                                                duration = liveInfo['temp']['data']['duration']
+                                                duration = liveDuration;
                                             }
-                                            function delUrlParam(url, name) {
-                                                if (!url) {
-                                                    return "";
-                                                }
-                                                var urlArr = url.split('?');
-                                                if (urlArr.length > 1 && urlArr[1].indexOf(name) > -1) {
-                                                    try {
-                                                        var query = urlArr[1];
-                                                        var obj = {}
-                                                        var arr = query.split("&");
-                                                        for (var i = 0; i < arr.length; i++) {
-                                                            arr[i] = arr[i].split("=");
-                                                            obj[arr[i][0]] = arr[i][1];
-                                                        };
-                                                        delete obj[name];
-                                                        var urlte = urlArr[0] + '?' + JSON.stringify(obj).replace(/[\"\{\}]/g, "").replace(/\:/g, "=").replace(/\,/g, "&");
-                                                        return urlte;
-                                                    } catch (e) {
-                                                        return url;
-                                                    }
-                                                }
+                                            if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(playTime) || playTime < 0) {
+                                                outcome.status = 'failed';
+                                                logs.addLog('直播回放时长或当前位置无效，本任务未执行。', 'red');
+                                                break;
                                             }
-                                            let viewhref = delUrlParam(viewerUrl, "watchMoment") + "&watchMoment=" + playTime;
+                                            let viewhref;
+                                            try {
+                                                const viewer = new URL(viewerUrl, href);
+                                                if (!/^https?:$/.test(viewer.protocol)) throw new Error('invalid protocol');
+                                                viewer.searchParams.set('watchMoment', String(playTime));
+                                                viewhref = viewer.href;
+                                            } catch {
+                                                outcome.status = 'failed';
+                                                logs.addLog('直播观看地址无效，本任务未执行，请重新进入课程后重试。', 'red');
+                                                break;
+                                            }
                                             let viewResult = await request({
                                                 'url': viewhref
                                             });
+                                            if (!viewResult) {
+                                                outcome.status = 'failed';
+                                                logs.addLog('直播观看页面加载失败，已停止此任务，请检查登录状态和网络。', 'red');
+                                                break;
+                                            }
                                             if (rt <= 0.9) {
                                                 duration = duration * (rt + 0.1);
                                             }
@@ -3588,7 +3723,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                 } else {
                                                     reportZ = true
                                                 }
-                                                if (reportR.responseText.includes('success') && (reportZ || reportZ.responseText.includes('请求成功'))) {
+                                                if (reportR && reportR.responseText.includes('success') && (liveStatus != 4 || (reportZ && reportZ.responseText.includes('请求成功')))) {
                                                     if (jiba) {
                                                         logs.addLog(`${jobData.property.title}：已观看${(playTime / 60).toFixed(1)}分钟`)
                                                         jiba = 0
@@ -3597,11 +3732,13 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                                     }
 
                                                 } else {
+                                                    outcome.status = 'failed';
                                                     logs.addLog('观看进度上报失败：' + jobData.property.title, 'red')
+                                                    break;
                                                 }
                                                 if (playTime >= duration) {
                                                     clearInterval(barr);
-                                                    logs.addLog('直播回放完成：' + jobData.property.title)
+                                                    logs.addLog('直播回放进度已上传，请回到学习通核对完成状态：' + jobData.property.title, '#946200')
                                                     break
                                                 }
                                                 playTime += 30
@@ -3614,6 +3751,7 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                         }
                                     case 'microCourse':
                                         if (!GM_getValue('doDocument', true)) {
+                                            outcome.status = 'skipped';
                                             logs.addLog('跳过任务：' + jobData.property.title, 'red');
                                             break;
                                         }
@@ -3623,27 +3761,101 @@ label { display: inline-block; font-size: 12px; font-weight: 550; color: #656b76
                                             'url': '/ananas/job/microCourse?jobid=' + jobData.jobid + '&knowledgeid=' + chapterId + '&courseid=' + courseId + '&clazzid=' + classId + '&jtoken=' + jobData.jtoken + '&checkMicroTopic=true&microTopicId=undefined&jsoncallback=jQuery3710909116110402' + $n(1, 9) + '_175567939' + $n(1, 9) + '&_=' + new Date() / 1
                                         })
                                         if (!domicroCoursResult) {
+                                            outcome.status = 'failed';
                                             logs.addLog('速课任务失败：' + jobData.property.title, 'red');
                                             break;
                                         }
-                                        if (domicroCoursResult.response.includes('添加考核点成功')) {
+                                        if (String(domicroCoursResult.responseText || '').includes('添加考核点成功')) {
+                                            outcome.status = 'confirmed';
                                             logs.addLog('速课任务完成：' + jobData.property.title, 'green');
                                         } else {
+                                            outcome.status = 'failed';
                                             console.log(domicroCoursResult)
-                                            logs.addLog('速课任务失败：' + jobData.property.title, 'green');
+                                            logs.addLog('速课任务失败：' + jobData.property.title, 'red');
                                         }
                                         break
+                                    case 'chaoxingClass': {
+                                        if (!GM_getValue('doLive', true)) {
+                                            outcome.status = 'skipped';
+                                            logs.addLog('跳过课堂直播任务：' + escapeText(jobData.property.title || ''), '#946200');
+                                            break;
+                                        }
+                                        const uuid = jobData.property.uuid;
+                                        if (!uuid) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('课堂直播缺少任务标识，无法执行。', 'red');
+                                            break;
+                                        }
+                                        logs.addLog('开始课堂直播任务：' + escapeText(jobData.property.title || ''));
+                                        const classDetail = await request({ url: 'https://k.chaoxing.com/apis/chapter/getMeetReview4Job?crossOrigin=true&uuid=' + encodeURIComponent(uuid) });
+                                        if (!classDetail) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('获取课堂直播失败，请检查登录状态与网络。', 'red');
+                                            break;
+                                        }
+                                        let review;
+                                        try { review = JSON.parse(classDetail.responseText).data?.[0]; } catch { }
+                                        const percent = Math.min(100, Math.max(0, Number(jobData.property.percent ?? 95) + 5));
+                                        const duration = Math.round(Number(review?.duration) * percent / 100);
+                                        let userTime = Number(review?.userTime ?? 0);
+                                        if (!review?.dataKey || !Number.isFinite(duration) || duration <= 10 || !Number.isFinite(userTime)) {
+                                            outcome.status = 'failed';
+                                            logs.addLog('课堂直播内容无法解析，请在学习通页面检查此任务。', 'red');
+                                            break;
+                                        }
+                                        userTime = Math.max(0, userTime);
+                                        if (duration - userTime < 10) userTime = Math.max(0, duration - 120);
+                                        let errors = 0, reports = 0;
+                                        while (userTime < duration) {
+                                            while ($w.wait) await sleep(500);
+                                            const nextTime = Math.min(duration, userTime + 10);
+                                            const watchResult = await request({
+                                                headers: { Referer: 'https://k.chaoxing.com/res/look/index.html?uuid=' + encodeURIComponent(uuid) + '&_t=202311241720' },
+                                                url: 'https://k.chaoxing.com/apis/chapter/addReviewDot4Job?crossOrigin=true&uuid=' + encodeURIComponent(uuid) + '&dataKey=' + encodeURIComponent(review.dataKey) + '&lastWatchTime=' + nextTime
+                                            });
+                                            let watchJson;
+                                            try { if (watchResult) watchJson = JSON.parse(watchResult.responseText); } catch { }
+                                            if (!watchJson?.result || watchJson.msg !== 'success') {
+                                                errors++;
+                                                if (errors >= 3) {
+                                                    outcome.status = 'failed';
+                                                    logs.addLog('课堂直播进度上传连续失败三次，已停止此任务；检查后可重试。', 'red');
+                                                    break;
+                                                }
+                                                logs.addLog('课堂直播进度上传失败，10 秒后重试。', '#946200');
+                                                await sleep(10000);
+                                                continue;
+                                            }
+                                            errors = 0;
+                                            userTime = nextTime;
+                                            updateBar(Math.round(userTime / duration * 100));
+                                            if (userTime >= duration) {
+                                                // 上报成功不等于课程任务点已被服务端判定通过。
+                                                logs.addLog('课堂直播回放进度已上传，请回到学习通核对完成状态：' + escapeText(jobData.property.title || ''), '#946200');
+                                                break;
+                                            }
+                                            if (reports++ % 6 === 0) logs.addLog(`课堂直播已观看 ${Math.round(userTime / 60)} 分钟，剩余 ${Math.ceil((duration - userTime) / 60)} 分钟。`);
+                                            await sleep(10000);
+                                        }
+                                        break;
+                                    }
                                     default:
+                                        outcome.status = 'skipped';
                                         logs.addLog('暂不支持的任务类型：' + jobData.type);
                                 }
                             } catch (e) {
+                                if (outcome) outcome.status = 'failed';
                                 console.log(e);
                                 try { logs.addLog('循环任务时出现无法预料的错误，请刷新页面重试，或联系作者反馈', 'red') } catch (e) { }
+                            } finally {
+                                if (barr) clearInterval(barr);
                             }
                         }
                     } catch (e) {
+                        chapterIssues++;
                         console.log(e);
                         try { logs.addLog('循环章节时出现无法预料的错误，请刷新页面重试，或联系作者反馈', 'red') } catch (e) { }
+                        continue loopPoint;
                     }
                 }
             }
