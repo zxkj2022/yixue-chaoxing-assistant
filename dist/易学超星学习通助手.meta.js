@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          易学·超星学习通助手[AI答题][一键启动][最小化运行]
 // @namespace     易学团队
-// @version       4.1.12
+// @version       4.1.13
 // @description   易学学习助手：超星课程任务管理、智慧树视频学习辅助，查询并核对参考答案。
 // @author        易学团队
 // @homepageURL   https://www.yxzs.love/
