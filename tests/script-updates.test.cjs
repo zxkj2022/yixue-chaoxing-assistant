@@ -20,7 +20,7 @@ test('release identifies the requested product, company, payment disclosure and 
     assert.equal(metadata.name, '易学网课助手｜超星学习通·知到智慧树｜全能题库·章节任务辅助');
     assert.equal(metadata.author, '三街网络');
     assert.ok(metadata.antifeature.some(value => /^payment\s/.test(value)));
-    assert.match(metadata.license, /禁止.*二次开发/);
+    assert.equal(metadata.license, '禁止二开');
     assert.match(metadata.copyright, /三街网络/);
 });
 

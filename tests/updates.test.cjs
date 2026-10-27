@@ -18,7 +18,7 @@ test('GitHub release includes an aligned lightweight update manifest and full in
     assert.equal(field(meta, 'name'), expected.name);
     assert.equal(field(meta, 'author'), '三街网络');
     assert.match(field(meta, 'antifeature'), /^payment\s/);
-    assert.match(field(meta, 'license'), /禁止.*二次开发/);
+    assert.equal(field(meta, 'license'), '禁止二开');
     assert.equal(field(meta, 'namespace'), '易学团队');
     assert.equal(field(meta, 'updateURL'), rawBase + encodeURIComponent(filename) + '.meta.js');
     assert.equal(field(meta, 'downloadURL'), rawBase + encodeURIComponent(filename) + '.user.js');

@@ -1,6 +1,6 @@
 {
   "name": "yixue-assistant-userscript",
-  "version": "4.1.16",
+  "version": "4.1.17",
   "private": true,
   "engines": { "node": ">=22.18.0" },
   "devDependencies": { "playwright": "1.62.1" },
