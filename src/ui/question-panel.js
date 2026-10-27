@@ -1,6 +1,8 @@
 'use strict';
 
 const { element, button, brand, appendLog } = require('./dom');
+const createMembershipView = require('./membership');
+const createProductInfo = require('./product-info');
 
 function maskToken(token) {
     if (!token) return '尚未连接题库';
@@ -25,6 +27,7 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
     header.append(minimize);
     const token = element(document, 'span', { className: 'yixue-masked-token', 'data-masked-token': '', text: maskToken(bank.getToken()) });
     const balance = element(document, 'div', { className: 'yixue-question-balance', 'aria-label': '题库账户额度', 'aria-live': 'polite' });
+    const membership = createMembershipView(document);
     const logs = element(document, 'div', { className: 'yixue-question-log', role: 'log', 'aria-label': '题目日志', 'aria-live': 'polite' });
     const summary = element(document, 'div', { className: 'yixue-question-summary', role: 'status', text: '等待处理题目' });
     const connectButton = button(document, '连接题库', () => Promise.resolve().then(() => (onConnect || connect)()).catch(error => appendLog(document, logs, error?.message || error, 'error')), { className: 'yixue-panel-button' });
@@ -44,20 +47,23 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
     let paused = false;
     let destroyed = false;
     const pauseWaiters = new Set();
-    const pause = button(document, '暂停', async () => {
-        paused = !paused;
+    async function setPaused(value, { notify = true } = {}) {
+        paused = Boolean(value);
         pause.textContent = paused ? '继续' : '暂停';
         pause.setAttribute('aria-pressed', String(paused));
         if (!paused) for (const resume of [...pauseWaiters]) resume();
-        try { await onPause?.(paused); }
+        try { if (notify) await onPause?.(paused); }
         catch (error) { appendLog(document, logs, error?.message || error, 'error'); }
-    }, { className: 'yixue-panel-button', 'aria-pressed': 'false' });
-    body.append(token, balance, element(document, 'div', { className: 'yixue-question-actions' }, [connectButton, refresh]),
-        element(document, 'div', { className: 'yixue-question-actions' }, [aiToggle, pause]), summary, logs);
+    }
+    const pause = button(document, '暂停', () => setPaused(!paused), { className: 'yixue-panel-button', 'aria-pressed': 'false' });
+    const productInfo = createProductInfo(context, { compact: true });
+    body.append(token, membership.element, balance, element(document, 'div', { className: 'yixue-question-actions' }, [connectButton, refresh]),
+        element(document, 'div', { className: 'yixue-question-actions' }, [aiToggle, pause]), summary, logs, productInfo.element);
     panel.append(header, body);
     root.append(panel);
     function renderBalance() {
         token.textContent = maskToken(bank.getToken());
+        membership.render(bank.balanceState(), Boolean(bank.getToken()), bank.routeState?.());
         balance.textContent = bank.getToken() ? bank.balanceLabel() : '未连接题库；可先设置搜题 API Token。';
         refresh.disabled = !bank.getToken() || bank.balanceState().loading;
     }
@@ -100,6 +106,7 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
             summary.textContent = Object.entries(labels).filter(([key]) => stats[key] !== undefined).map(([key, label]) => `${label} ${stats[key]}`).join(' · ') || '等待处理题目';
         },
         isPaused: () => paused,
+        setPaused,
         waitIfPaused(signal) {
             if (signal?.aborted) return Promise.reject(signal.reason || new window.DOMException('操作已取消', 'AbortError'));
             if (!paused || destroyed) return Promise.resolve();
@@ -117,6 +124,7 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
             paused = false;
             for (const resume of [...pauseWaiters]) resume();
             unsubscribe();
+            productInfo.destroy();
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', end);
             window.removeEventListener('pointercancel', end);

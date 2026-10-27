@@ -1,21 +1,12 @@
-MIT License
+Copyright (c) 2026 三街网络
+All rights reserved.
 
-Copyright (c) 2026 易学团队
+本声明适用于 4.1.16 及后续版本中由三街网络享有权利的代码。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+允许使用者免费安装和使用原版脚本。脚本本身不收取费用；题库查询及 AI 等外部服务可能收费，其价格、积分和会员规则由相应服务提供方说明。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+未经权利人授权，禁止对上述代码进行二次开发、修改、衍生开发及再分发。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+本声明不替代第三方开源组件的许可证。第三方组件及其版权、许可声明仍按原许可证适用，详见 THIRD-PARTY-LICENSES.md 和安装文件中保留的声明。
+
+已按 MIT 许可证发布的历史版本继续遵循其随附许可证。

@@ -9,7 +9,7 @@ const createEntry = require('./entry');
 const createDashboard = require('./dashboard');
 const { createQuestionPanel } = require('./question-panel');
 
-function createUi({ document, window, bank, access, settings, logoUrl = 'https://yixue-cmg.pages.dev/assets/yixue-logo.png', onTokenSaved }) {
+function createUi({ document, window, bank, access, settings, updates, logoUrl = require('./logo'), onTokenSaved }) {
     const root = element(document, 'div', { id: 'yixue-ui-root' });
     const style = element(document, 'style', { 'data-yixue-ui-style': '', text: [dialogCss, dashboardCss, questionCss].join('\n') });
     (document.head || document.documentElement).append(style);
@@ -19,14 +19,14 @@ function createUi({ document, window, bank, access, settings, logoUrl = 'https:/
     let tokenFlight = null;
     let accessFlight = null;
     let disposed = false;
-    const connect = () => window.open(bank.base?.() || 'https://tk.sanzwk.com', '_blank', 'noopener,noreferrer');
+    const connect = () => window.open(bank.website?.() || 'https://tk.sanzwk.com', '_blank', 'noopener,noreferrer');
     async function saved(value, forAccess = false) {
         const token = forAccess ? access.saveToken(value) : bank.setToken(String(value).trim()) || bank.getToken();
         await onTokenSaved?.(token);
-        if (bank.getToken()) await bank.refreshBalance({ force: true });
+        if (bank.getToken()) await Promise.all([bank.refreshBalance({ force: true }), bank.refreshCapabilities?.({ force: true })]);
         return token;
     }
-    const context = { document, window, root, bank, access, settings, logoUrl, modal, connect, saveToken: value => saved(value, true) };
+    const context = { document, window, root, bank, access, settings, updates, logoUrl, modal, connect, saveToken: value => saved(value, true) };
     function track(surface) {
         surfaces.add(surface);
         if (surface.onCleanup) surface.onCleanup(() => surfaces.delete(surface));
@@ -42,7 +42,7 @@ function createUi({ document, window, bank, access, settings, logoUrl = 'https:/
         if (tokenFlight) return tokenFlight;
         tokenFlight = new Promise(resolve => {
             const dialog = modal.open({ id: 'yixue-token-dialog', title: '手动填写 Token', subtitle: '填写题库「接口接入」提供的 API Token', compact: true, onClose: value => { tokenFlight = null; resolve(typeof value === 'string' ? value : ''); } });
-            const input = element(document, 'input', { id: 'yixue-api-token', className: 'yx-form-input', type: 'password', autocomplete: 'off', spellcheck: false, value: bank.getToken(), 'aria-label': '搜题 API Token', placeholder: 'tk_…' });
+            const input = element(document, 'input', { id: 'yixue-api-token', className: 'yx-form-input', type: 'password', autocomplete: 'off', spellcheck: false, value: bank.getToken(), 'aria-label': '搜题 API Token', placeholder: 'ys_…' });
             const error = element(document, 'p', { className: 'yx-error', role: 'status' });
             const save = button(document, '保存 Token', async () => {
                 error.textContent = '';

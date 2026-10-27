@@ -1,4 +1,14 @@
 'use strict';
+function isManagedQuestionFrame(windowObject) {
+    try {
+        for (let current = windowObject, depth = 0; current && depth < 12; depth++) {
+            if (current.name === 'yixue-managed-chapter') return true;
+            if (current.parent === current) break;
+            current = current.parent;
+        }
+    } catch { /* Cross-origin ancestors cannot be inspected. */ }
+    return false;
+}
 async function claimCourseSurface(windowObject, documentObject) {
     const tag = 'data-yixue-course-owner';
     if (documentObject.documentElement.hasAttribute(tag)) return false;
@@ -33,4 +43,4 @@ async function claimCourseSurface(windowObject, documentObject) {
     if (!delegated) documentObject.documentElement.setAttribute(tag, 'frame');
     return !delegated;
 }
-module.exports = { claimCourseSurface };
+module.exports = { claimCourseSurface, isManagedQuestionFrame };

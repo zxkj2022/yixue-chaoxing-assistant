@@ -1,9 +1,12 @@
 // ==UserScript==
-// @name          易学·超星学习通助手[AI答题][一键启动][最小化运行]
+// @name          易学网课助手｜超星学习通·知到智慧树｜全能题库·章节任务辅助
 // @namespace     易学团队
-// @version       4.1.15
-// @description   易学学习助手：超星课程任务管理、智慧树视频学习辅助，查询并核对参考答案。
-// @author        易学团队
+// @version       4.1.16
+// @description   脚本本身免费使用，题库服务可能收费。三街网络出品，支持超星学习通、知到智慧树课程任务与参考答案辅助。题库查询及 AI 服务具体以题库积分或会员套餐规则为准。有任何使用疑问可加入 QQ 群反馈：952042950。禁止与其他网课脚本同时运行。
+// @author        三街网络
+// @copyright     2026 三街网络，保留所有权利
+// @antifeature   payment 脚本本身免费使用，题库查询及 AI 服务可能收费，具体以题库积分或会员套餐规则为准；可关闭答题功能。
+// @supportURL    https://scriptcat.org/zh-CN/script-show-page/8747/issue
 // @homepageURL   https://www.yxzs.love/
 // @updateURL     https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.meta.js
 // @downloadURL   https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
@@ -98,5 +101,6 @@
 // @connect       127.0.0.1
 // @connect       tk.sanzwk.com
 // @connect       api.sanzwk.com
-// @license       MIT
+// @connect       raw.githubusercontent.com
+// @license       Copyright (c) 2026 三街网络。未经授权禁止二次开发、修改及再分发；第三方开源组件遵循各自许可证。
 // ==/UserScript==

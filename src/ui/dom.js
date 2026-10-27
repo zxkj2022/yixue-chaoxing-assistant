@@ -21,9 +21,11 @@ function button(document, text, onClick, properties = {}) {
 }
 
 function brand(document, logoUrl, className) {
-    return element(document, 'span', { className }, [element(document, 'img', {
+    const image = element(document, 'img', {
         src: logoUrl, alt: '易学助手', referrerPolicy: 'no-referrer', width: 42, height: 42,
-    })]);
+    });
+    image.addEventListener('error', () => { image.src = require('./logo-fallback'); }, { once: true });
+    return element(document, 'span', { className }, [image]);
 }
 
 function appendLog(document, target, message, tone = 'info') {

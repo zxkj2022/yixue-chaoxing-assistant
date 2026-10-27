@@ -67,16 +67,21 @@ function waitForChangedQuestions(workflow, document, previous, { signal, timeout
 }
 
 async function runQuestionPages(workflow, document, { signal, useAi, onPage, waitIfPaused, timeoutMs = 5000, settleMs = 100, maxPages = 200 } = {}) {
-    const combined = { total: 0, answered: 0, accuracy: 0, results: [], stopped: false, pages: 0 };
+    const combined = { total: 0, matched: 0, answered: 0, accuracy: 0, results: [], stopped: false, pages: 0 };
     const seen = new Set();
     for (let index = 0; index < maxPages; index++) {
         if (signal?.aborted) { combined.stopped = true; break; }
-        const questions = workflow.read(document);
+        let questions = workflow.read(document);
+        if (!questions.length && index === 0) {
+            questions = await waitForChangedQuestions(workflow, document, questionFingerprint([]), { signal, timeoutMs, settleMs });
+            if (!questions || signal?.aborted) { combined.stopped = true; break; }
+        }
         const fingerprint = questionFingerprint(questions);
         if (!questions.length || seen.has(fingerprint)) break;
         seen.add(fingerprint);
         const result = await workflow.run(document, { signal, useAi, apply: true });
         combined.total += result.total;
+        combined.matched += result.matched || 0;
         combined.answered += result.answered;
         combined.results.push(...result.results);
         combined.pages++;

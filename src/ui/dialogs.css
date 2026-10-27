@@ -56,5 +56,38 @@
 .yx-error { color:#b73e47; font-size:12px; min-height:20px; margin:0 0 10px; }
 .yx-course-sheet button:focus-visible, .yx-course-sheet a:focus-visible { outline:3px solid #83b7ff; outline-offset:3px; }
 @media(max-width:640px) { .yx-modal-layer { padding:14px; } .yx-course-sheet { padding:21px; border-radius:23px; max-height:calc(100dvh - 28px); } .yx-course-sheet h2 { font-size:18px; } .yx-course-mark { width:36px; height:36px; font-size:21px; border-radius:11px; } .yx-course-heading { gap:10px; margin-bottom:19px; } .yx-account-grid { grid-template-columns:1fr; gap:11px; } .yx-account-field { padding:13px; } .yx-action-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .yx-entry-footer { align-items:flex-start; gap:12px; } .yx-choice { padding:12px; } .yx-choice .yx-button { min-width:130px; font-size:12px; } }
+.yx-membership { padding: 11px 12px; margin-bottom: 9px; border: 1px solid #e5eaf2; border-radius: 10px; background: #f8fafc; }
+.yx-member-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.yx-member-badge { display: inline-flex; align-items: center; padding: 3px 9px; border: 1px solid #dfe5ee; border-radius: 6px; color: #617084; background: #fff; font-size: 12px; font-weight: 700; letter-spacing: .2px; }
+.yx-member-quota { color: #53657e; font-size: 11px; font-variant-numeric: tabular-nums; }
+.yx-membership .yx-member-expiry { margin: 6px 0 0; font-size: 11px; color: #758196; overflow-wrap: anywhere; }
+.yx-membership[data-level="1"] .yx-member-badge { color: #82530d; border-color: #edd498; background: #fff2ca; }
+.yx-membership[data-level="2"] .yx-member-badge { color: #6940ab; border-color: #dcc6f5; background: #f1e7ff; }
+.yx-membership[data-level="3"] .yx-member-badge { color: #f3d389; border-color: #463b27; background: #29272e; }
+.yx-membership[data-level="member"] .yx-member-badge { color: #287859; border-color: #bfdfce; background: #eaf7f0; }
+.yx-membership .yx-member-route { margin: 7px 0 0; color: #947025; font-size: 11px; line-height: 1.7; }
+.yx-membership[data-status="error"] { border-color: #efd5da; }
+.yx-membership[data-status="error"][data-level="0"] .yx-member-badge { color: #a44050; border-color: #efd5da; background: #fff1f3; }
+.yixue-connection-status[data-mode="error"] { color: #a44050 !important; border-color: #efd5da !important; background: #fff1f3 !important; }
+.yixue-connection-status[data-mode="error"]::before { background: #c45b6c !important; }
+@media(max-width:640px) {
+    .yx-course-sheet input:not([type="checkbox"]) { font-size:16px; min-height:44px; }
+    .yx-course-sheet .yx-choice { flex-wrap:wrap; }
+    .yx-course-sheet .yx-choice .yx-button { width:100%; }
+    .yx-account-label { flex-wrap:wrap; }
+}
 @media(prefers-reduced-motion:reduce) { .yx-button, .yx-action { transition:none; } }
+.yx-product-info { min-width:0; padding:12px 0; color:#64748b; font:13px/1.65 system-ui,sans-serif; text-align:left; overflow-wrap:anywhere; }
+.yx-product-info p { margin:0 0 6px; font:inherit; }
+.yx-product-info .yx-support-copy { color:#344b70; }
+.yx-product-info .yx-script-rule { color:#986a24; }
+.yx-product-links { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; min-width:0; }
+.yx-product-links button,.yx-product-links a { box-sizing:border-box; display:inline-flex; align-items:center; min-height:36px; padding:4px 0; font:inherit; color:#3478f6; background:transparent; border:0; cursor:pointer; text-decoration:none; }
+.yx-product-links button:disabled { color:#8997ac; cursor:default; }
+.yx-product-links a[hidden] { display:none; }
+.yx-update-status { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.yx-update-status[data-status="available"] { color:#18735d; font-weight:600; }
+.yx-update-status[data-status="error"] { color:#986a24; }
+.yx-product-info.is-compact { font-size:12px; }
+@media(max-width:560px) { .yx-product-links button,.yx-product-links a { min-height:44px; } }
         

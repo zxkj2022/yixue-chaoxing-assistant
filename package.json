@@ -1,13 +1,13 @@
 {
-  "name": "yixue-chaoxing-assistant",
-  "version": "4.0.0",
+  "name": "yixue-assistant-userscript",
+  "version": "4.1.16",
   "private": true,
   "engines": { "node": ">=22.18.0" },
+  "devDependencies": { "playwright": "1.62.1" },
   "scripts": {
-    "test": "node --test tests/question-bank.test.cjs tests/course-access.test.cjs tests/core-runtime.test.cjs tests/runner.test.cjs tests/question-matching.test.cjs tests/collection.test.cjs",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include **/src/core/*.js --test-coverage-include **/src/platform/*.js --test-coverage-include **/src/tasks/*.js --test-coverage-include **/src/questions/matcher.js --test-coverage-lines 80 --test-coverage-branches 80 --test-coverage-functions 80 tests/question-bank.test.cjs tests/course-access.test.cjs tests/core-runtime.test.cjs tests/runner.test.cjs tests/question-matching.test.cjs tests/collection.test.cjs",
-    "test:ui": "node --test tests/course-ui.test.cjs tests/course-popup.test.cjs tests/course-engine.test.cjs tests/question-pages.test.cjs tests/chapter-flow.test.cjs",
-    "build:preview": "node scripts/build-rewrite.cjs",
-    "build": "node scripts/build.cjs"
+    "build": "node scripts/build.cjs",
+    "test": "node --test tests/regressions.test.cjs tests/api-protocol.test.cjs tests/api-connectivity.test.cjs tests/video-protocol.test.cjs tests/updates.test.cjs tests/script-updates.test.cjs tests/script-guard.test.cjs tests/screen-awake.test.cjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include **/src/core/question-bank.js --test-coverage-include **/src/core/updates.js --test-coverage-include **/src/core/script-guard.js --test-coverage-include **/src/tasks/video*.js --test-coverage-include **/src/ui/connection.js --test-coverage-lines 80 --test-coverage-branches 80 --test-coverage-functions 80 tests/regressions.test.cjs tests/api-protocol.test.cjs tests/api-connectivity.test.cjs tests/video-protocol.test.cjs tests/script-updates.test.cjs tests/script-guard.test.cjs",
+    "test:ui": "node --test --test-concurrency=1 tests/dashboard.test.cjs tests/product-ui.test.cjs tests/mobile-dashboard.test.cjs tests/exam-boundaries.test.cjs tests/question-compat.test.cjs tests/encrypted-font.test.cjs tests/answer-collection.test.cjs tests/reference-compat.test.cjs"
   }
 }

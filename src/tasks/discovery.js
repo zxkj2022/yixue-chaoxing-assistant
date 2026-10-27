@@ -34,7 +34,7 @@ async function discoverEngineChapters(env) {
 async function discoverNonJobChapters(env) {
     const chapters = [], excluded = new Set(['已完成', '待批阅', '已保存']);
     const statistics = new URL(env.context.origin);
-    statistics.hostname = statistics.hostname.replace(/^mooc(?:1|2-ans)?\./, 'stat2-ans.');
+    statistics.hostname = statistics.hostname.replace(/^mooc(?:1(?:-\d+|-api)?|2-ans)?\./, 'stat2-ans.');
     statistics.pathname = '/stat2/chapter-exam/s/tests/data';
     for (let page = 1; page <= 100; page++) {
         try {

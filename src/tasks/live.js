@@ -1,4 +1,5 @@
 'use strict';
+const { assignedObject, parseLiteral, tokens } = require('../platform/script-data');
 
 function finite(value, label, minimum = 0) {
     const number = Number(value);
@@ -12,7 +13,11 @@ async function runClassReplay(task, env) {
     if (!validUserId(env)) throw new Error('课堂直播缺少有效用户 ID');
     const uuid = task.property.uuid;
     if (!uuid) throw new Error('课堂直播缺少 UUID');
-    const result = await env.requestJSON('https://k.chaoxing.com/apis/chapter/getMeetReview4Job', { uuid, courseId: env.context.courseId, classId: env.context.classId, cpi: env.context.cpi });
+    const viewer = new URL('https://k.chaoxing.com/res/look/index.html');
+    viewer.searchParams.set('uuid', uuid);
+    viewer.searchParams.set('_t', '202311241720');
+    const headers = { Referer: viewer.href };
+    const result = await env.requestJSON('https://k.chaoxing.com/apis/chapter/getMeetReview4Job', { crossOrigin: true, uuid, courseId: env.context.courseId, classId: env.context.classId, cpi: env.context.cpi }, headers);
     if (!Array.isArray(result.data) || !result.data.length) throw new Error('课堂直播回放数据为空');
     for (const recording of result.data) {
         const duration = finite(recording.duration, '课堂直播时长', 0.001);
@@ -23,7 +28,7 @@ async function runClassReplay(task, env) {
             const next = Math.min(position + 10, duration);
             await env.wait((next - position) * 1000, env.signal);
             await env.retry(async () => {
-                const uploaded = await env.requestJSON('https://k.chaoxing.com/apis/chapter/addReviewDot4Job', { uuid, dataKey: recording.dataKey, lastWatchTime: next });
+                const uploaded = await env.requestJSON('https://k.chaoxing.com/apis/chapter/addReviewDot4Job', { crossOrigin: true, uuid, dataKey: recording.dataKey, lastWatchTime: next }, headers);
                 if (uploaded.result !== true || uploaded.msg !== 'success') throw new Error('平台拒绝回放进度');
                 return uploaded;
             }, '课堂直播回放进度');
@@ -58,23 +63,30 @@ function scriptString(html, variable) {
     return '';
 }
 
-function assignedObject(html, variable) {
-    const match = new RegExp('\\b' + variable + '\\s*=\\s*').exec(html);
-    if (!match) return null;
-    const start = match.index + match[0].length;
-    if (html[start] !== '{') throw new Error('直播页面数据必须为 JSON 对象');
-    let depth = 0, quoted = false, escaped = false;
-    for (let index = start; index < html.length; index++) {
-        const character = html[index];
-        if (quoted) {
-            if (escaped) escaped = false;
-            else if (character === '\\') escaped = true;
-            else if (character === '"') quoted = false;
-        } else if (character === '"') quoted = true;
-        else if (character === '{') depth++;
-        else if (character === '}' && --depth === 0) return JSON.parse(html.slice(start, index + 1));
+function pageReplayId(html) {
+    const scripts = [...String(html).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)];
+    const ids = new Set();
+    const key = token => {
+        if (token === undefined) return '';
+        try { return /^['"]/.test(token) ? parseLiteral(token) : token; }
+        catch (_) { return ''; }
+    };
+    for (const source of scripts.length ? scripts.map(match => match[1]) : [String(html)]) {
+        const list = tokens(source).map(token => token.text);
+        for (let index = 0; index < list.length - 3; index++) {
+            if (key(list[index]) !== 'data' || list[index + 1] !== ':' || list[index + 2] !== '{') continue;
+            let depth = 1;
+            for (let cursor = index + 3; cursor < list.length && depth; cursor++) {
+                if (list[cursor] === '{' || list[cursor] === '[') depth++;
+                if (list[cursor] === '}' || list[cursor] === ']') depth--;
+                if (depth !== 1 || key(list[cursor]) !== 'liveId' || list[cursor + 1] !== ':') continue;
+                const value = key(list[cursor + 2]);
+                if (/^\d{4,50}$/.test(value) && [',', '}'].includes(list[cursor + 3])) ids.add(value);
+            }
+        }
     }
-    throw new Error('直播页面数据不完整');
+    if (ids.size > 1) throw new Error('直播回放 ID 不明确');
+    return [...ids][0] || '';
 }
 
 async function runLive(task, env) {
@@ -87,7 +99,7 @@ async function runLive(task, env) {
     if (rt > 1) throw new Error('直播上报参数无效');
     let liveId = originalId;
     if (liveId.length < 16) {
-        const converted = await env.requestJSON('/ananas/live/getnewliveid', { oliveid: originalId });
+        const converted = parseLiteral(await env.requestText('/ananas/live/getnewliveid', { oliveid: originalId }));
         if (!converted.newLiveId) throw new Error('直播 ID 转换失败');
         liveId = String(converted.newLiveId);
     }
@@ -104,16 +116,19 @@ async function runLive(task, env) {
     const html = await env.requestText(pageUrl.href);
     const line = assignedObject(html, 'lineVideo');
     const threshold = duration * (rt <= 0.9 ? rt + 0.1 : 1);
-    let position = 0, target = Math.max(0, threshold - watched), userInfo = '';
+    let position = 0, target = Math.max(0, threshold - watched), userInfo = '', replayId = originalId;
     if (line) {
-        const length = finite(line.videoLongtime, '直播回放时长', 0.001);
+        const length = finite(line.videoLongtime, '直播回放时长');
         const start = /\bvideoPlayStartTime\s*=\s*([^;,\r\n<]+)/.exec(html);
         let startValue;
         try { startValue = JSON.parse(start?.[1] || ''); }
         catch (_) { throw new Error('直播回放起点必须为数字'); }
         if (typeof startValue !== 'number') throw new Error('直播回放起点必须为数字');
         position = finite(startValue, '直播回放起点');
-        target = Math.min(threshold, length);
+        // Some live pages expose a tiny placeholder duration; liveinfo is the
+        // legacy fallback, while a real lineVideo duration is authoritative.
+        target = (length < 10 ? duration : length) * (rt <= 0.9 ? rt + 0.1 : 1);
+        replayId = pageReplayId(html) || originalId;
         userInfo = scriptString(html, 'uInfo');
         const viewerAddress = scriptString(html, 'viewerUrl');
         if (!viewerAddress.trim()) throw new Error('直播缺少观看地址');
@@ -131,7 +146,7 @@ async function runLive(task, env) {
             const report = await env.requestText('https://zhibo.chaoxing.com/saveTimePc', { streamName: property.streamName, vdoid: property.vdoid, userId: uid, courseId: env.context.courseId, isStart: initial ? 0 : 1, t: Date.now() }, { Referer: pageUrl.href });
             if (!/\bsuccess\b/i.test(report)) throw new Error('直播平台未接受观看进度');
             if (line && Number(data.liveStatus) === 4) {
-                const replay = await env.requestText('https://zhibo.chaoxing.com/apis/live/put/watchMoment', { liveId: originalId, streamName: property.streamName, vdoid: property.vdoid, watchMoment: current, t: Date.now(), u: userInfo }, { Referer: pageUrl.href });
+                const replay = await env.requestText('https://zhibo.chaoxing.com/apis/live/put/watchMoment', { liveId: replayId, streamName: property.streamName, vdoid: property.vdoid, watchMoment: current, t: Date.now(), u: userInfo }, { Referer: pageUrl.href });
                 if (!replay.includes('请求成功')) throw new Error('直播平台未接受回放进度');
             }
         }, '直播进度上报');

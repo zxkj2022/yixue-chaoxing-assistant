@@ -11,7 +11,10 @@ async function runDocument(task, env) {
     const specification = resources.get(task.type);
     if (!task.jobid) throw new Error('缺少任务 ID');
     const parameters = { jobid: task.jobid, knowledgeid: env.chapter.id, courseid: env.context.courseId, clazzid: env.context.classId, jtoken: task.jtoken };
-    if (task.type === 'microCourse') Object.assign(parameters, { checkMicroTopic: true, microTopicId: 'undefined' });
+    if (task.type === 'microCourse') {
+        const timestamp = Date.now();
+        Object.assign(parameters, { checkMicroTopic: true, microTopicId: 'undefined', jsoncallback: 'jQuery371' + timestamp, _: timestamp });
+    }
     await env.wait(specification.wait, env.signal);
     const text = await env.requestText(specification.path, parameters);
     const confirmed = task.type === 'microCourse' ? text.includes('添加考核点成功') : env.parseJSON(text).status === true;

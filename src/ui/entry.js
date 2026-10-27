@@ -2,12 +2,16 @@
 
 const { element, button } = require('./dom');
 const createAccountView = require('./account');
+const createProductInfo = require('./product-info');
+const product = require('../core/product');
 
 function createEntry(context, callbacks) {
     const { document, bank, access, modal, connect, saveToken } = context;
-    const dialog = modal.open({ id: 'yixue-entry', title: '易学助手', subtitle: '选择需要使用的课程功能' });
+    const dialog = modal.open({ id: 'yixue-entry', title: product.brand, subtitle: '选择需要使用的课程功能' });
     const account = createAccountView({ document, bank, prefix: 'yixue-entry', onConnect: connect, onSave: saveToken, getDisplayToken: access.getDisplayToken });
     dialog.onCleanup(account.destroy);
+    const productInfo = createProductInfo(context, { compact: true, showPricing: false });
+    dialog.onCleanup(productInfo.destroy);
     const grid = element(document, 'div', { className: 'yx-action-grid' });
     const actions = [
         ['course', '刷章节', '视频、文档与章节测验', '▶', callbacks.onCourse],
@@ -30,8 +34,8 @@ function createEntry(context, callbacks) {
     dialog.sheet.append(account.element,
         element(document, 'h3', { className: 'yx-action-heading', text: '课程任务' }),
         element(document, 'p', { className: 'yx-body-copy', text: '按需选择功能，执行状态会显示在对应面板。' }), grid,
-        element(document, 'div', { className: 'yx-entry-footer' }, [
-            element(document, 'small', { text: '脚本免费使用 · 题库服务以账户规则为准' }),
+        productInfo.element, element(document, 'div', { className: 'yx-entry-footer' }, [
+            element(document, 'small', { text: product.pricingNotice }),
             button(document, '取消', () => dialog.close(), { id: 'yixue-entry-cancel', className: 'yx-button yx-quiet' }),
         ]),
     );

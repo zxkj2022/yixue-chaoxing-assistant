@@ -1,4 +1,5 @@
 'use strict';
+const { observeHostActions } = require('../platform/host-actions');
 
 async function runWork(task, env) {
     if (!env.bank || typeof env.bank.getToken !== 'function' || !env.bank.getToken()) {
@@ -14,22 +15,39 @@ async function runWork(task, env) {
     const parameters = { workId, courseId: env.context.courseId, clazzId: env.context.classId, knowledgeId: env.chapter.id, jobId: env.nonJob ? '' : jobId, enc: task.enc || '' };
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, String(value));
     const page = await env.questions.openPage(url.href, { signal: env.signal });
-    const result = await env.questions.run(page.document, { signal: env.signal, useAi: Boolean(env.settings.get('doAI', false)), apply: true });
+    const result = await env.questions.run(page.document, { signal: env.signal, apply: true });
     if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
     if (result.stopped) {
         env.log('章节查询已停止，本次不自动保存或提交，请人工核对：' + env.name, 'warning');
         return result.answered ? 'pending' : 'skipped';
     }
-    if (!result.total || !result.answered) { env.log('章节测验没有可填写的参考答案，已跳过：' + env.name, 'warning'); return 'skipped'; }
+    if (!result.total || !result.answered) {
+        if (result.total && result.matched > 0) {
+            page.retain?.();
+            env.log('章节测验已命中但没有确认写入，已保留测验页面，请核对题目日志：' + env.name, 'warning');
+        } else env.log('章节测验没有可填写的参考答案，已跳过：' + env.name, 'warning');
+        return 'skipped';
+    }
     const host = page.window;
     const threshold = Number(env.settings.get('vgqtlv', 80));
     const canSubmit = env.settings.get('autoSubmit', false) && Number.isFinite(threshold) && result.accuracy >= threshold && typeof host?.toadd === 'function' && typeof host?.submitAction === 'function';
-    if (canSubmit) {
-        await host.toadd();
-        if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
-        await host.submitAction();
+    if (canSubmit || typeof host?.noSubmit === 'function') {
+        page.retain?.();
+        const observation = observeHostActions(host, { signal: env.signal });
+        try {
+            if (canSubmit) {
+                await host.toadd();
+                if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
+                observation.beginAction();
+                await host.submitAction();
+            } else await host.noSubmit();
+            observation.actionsInvoked();
+            const state = await observation.result;
+            if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
+            if (state.completed) page.release?.();
+            else if (typeof page.retain === 'function') env.log('未确认章节保存请求已完成，已保留测验页面，请人工核对：' + env.name, 'warning');
+        } finally { observation.dispose(); }
     }
-    else if (typeof host?.noSubmit === 'function') await host.noSubmit();
     env.log('章节测验参考答案已填写' + (canSubmit ? '并请求提交' : '，请人工核对') + '；完成状态待核实：' + env.name, 'warning');
     return 'pending';
 }

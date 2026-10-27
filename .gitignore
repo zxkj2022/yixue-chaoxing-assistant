@@ -16,3 +16,7 @@ __pycache__/
 .agents/
 /tests/api_fixture.py
 /tests/integration.cjs
+
+!dist/易学超星学习通助手.meta.js
+
+/易学·超星学习通助手.user.js

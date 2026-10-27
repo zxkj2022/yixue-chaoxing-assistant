@@ -1,5 +1,5 @@
 'use strict';
-const defaults = Object.freeze({ doVideo: true, doDocument: true, doLive: true, doWork: true, doRenwu: false, doNoMission: false, doAI: false, autoSubmit: true, beisu: 1, vgqtlv: 85 });
+const defaults = Object.freeze({ doVideo: true, doDocument: true, doLive: true, doWork: true, doRenwu: false, doNoMission: false, doAI: false, autoSubmit: true, keepAwake: true, beisu: 1, vgqtlv: 85 });
 function createSettings({ read, write }) {
     function normalize(key, value) {
         if (!(key in defaults)) return undefined;
