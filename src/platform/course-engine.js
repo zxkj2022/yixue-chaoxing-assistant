@@ -193,7 +193,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
                         result = await registration.execute(task, { context, chapter, defaults: item.defaults, settings, bank, questions, signal, wait, requestText, requestJSON, parseJSON, retry, log, progress, remaining, name, nonJob: nonJobWork, prepareVideoSession });
                         if (!outcomes.includes(result)) throw new Error('任务处理结果无效');
                     }
-                } catch (error) { checkSignal(); result = 'failed'; log(name + '：' + error.message, 'danger'); }
+                } catch (error) { checkSignal(); if (error.stopCourse === true) throw error; result = 'failed'; log(name + '：' + error.message, 'danger'); }
                 if (result === 'confirmed') progress(100);
                 summary[result]++;
                 chapter.outcomes.push({ required, job: Boolean(task?.job), result });
@@ -213,3 +213,4 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
 }
 
 module.exports = { createCourseRunner, parseCardData };
+

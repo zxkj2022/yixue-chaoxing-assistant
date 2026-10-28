@@ -1,5 +1,6 @@
 'use strict';
 const { abortError } = require('./primitives');
+const { vpnPrefix: readVpnPrefix } = require('./routes');
 const isLoginResponse = result => /<title[^>]*>\s*用户登录\s*<\/title>/i.test(String(result?.responseText ?? result?.response ?? '')) || /\/login(?:[/?#]|$)/i.test(result?.finalUrl || result?.responseURL || '');
 function safeEndpoint(url) {
     const target = new URL(url);
@@ -19,7 +20,7 @@ function createHttpError(result, url) {
 }
 function createTransport({ base, send, createXhr = () => new XMLHttpRequest(), pageUrl = base }) {
     const page = new URL(pageUrl);
-    const vpnPrefix = page.pathname.match(/^(.*\/https\/[a-z0-9]+)(?:\/|$)/i)?.[1];
+    const vpnPrefix = readVpnPrefix(page.pathname);
     const proxyUrl = url => {
         if (!vpnPrefix) return url;
         const prefixed = url.pathname === vpnPrefix || url.pathname.startsWith(vpnPrefix + '/');
@@ -96,3 +97,4 @@ function createTransport({ base, send, createXhr = () => new XMLHttpRequest(), p
     } };
 }
 module.exports = { createTransport, createHttpError };
+

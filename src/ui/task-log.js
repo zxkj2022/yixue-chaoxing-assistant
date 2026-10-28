@@ -1,5 +1,5 @@
 'use strict';
-const { element, button } = require('./dom');
+const { element, button, logText } = require('./dom');
 
 function createTaskLog(document) {
     const log = element(document, 'div', { id: 'yixue-course-log', className: 'yixue-log', role: 'log', 'aria-label': '任务日志', 'aria-live': 'polite' });
@@ -7,16 +7,19 @@ function createTaskLog(document) {
     const count = element(document, 'span', { className: 'yixue-log-count', text: '0 条记录' });
     const follow = element(document, 'input', { type: 'checkbox', checked: true, 'aria-label': '跟随最新日志' });
     const filters = element(document, 'div', { className: 'yixue-log-filters', 'aria-label': '筛选日志' });
-    let active = 'all';
+    let active = 'all', shown = 0;
     const matches = line => active === 'all' || (active === 'issues' ? ['error', 'warning'].includes(line.dataset.tone) : line.dataset.tone === 'success');
-    const render = () => {
-        const lines = Array.from(log.children);
-        for (const line of lines) line.hidden = !matches(line);
-        const shown = lines.filter(line => !line.hidden).length;
+    const updateCount = () => {
+        const total = log.childElementCount;
         log.classList.toggle('is-empty', shown === 0);
         empty.hidden = shown > 0;
-        empty.textContent = lines.length ? '暂无符合筛选条件的记录。' : '暂无记录，启动后将在这里显示任务动态。';
-        count.textContent = active === 'all' ? lines.length + ' 条记录' : shown + ' / ' + lines.length + ' 条记录';
+        empty.textContent = total ? '暂无符合筛选条件的记录。' : '暂无记录，启动后将在这里显示任务动态。';
+        count.textContent = active === 'all' ? total + ' 条记录' : shown + ' / ' + total + ' 条记录';
+    };
+    const render = () => {
+        shown = 0;
+        for (const line of log.children) { line.hidden = !matches(line); if (!line.hidden) shown++; }
+        updateCount();
     };
     for (const [value, label, name] of [['all', '全部', '查看全部记录'], ['issues', '异常', '仅看异常记录'], ['success', '完成', '仅看完成记录']]) {
         const filter = button(document, label, () => {
@@ -39,13 +42,15 @@ function createTaskLog(document) {
             const line = element(document, 'div', { className: 'yixue-log-line', 'data-tone': level }, [
                 element(document, 'time', { dateTime: now.toISOString(), text: now.toLocaleTimeString('zh-CN', { hour12: false }) }),
                 element(document, 'span', { className: 'yixue-log-badge', text: labels[level] }),
-                element(document, 'span', { className: 'yixue-log-message', text: message }),
+                element(document, 'span', { className: 'yixue-log-message', text: logText(message) }),
             ]);
             log.append(line);
-            while (log.childElementCount > 500) log.firstElementChild.remove();
-            render();
+            line.hidden = !matches(line); if (!line.hidden) shown++;
+            while (log.childElementCount > 500) { if (!log.firstElementChild.hidden) shown--; log.firstElementChild.remove(); }
+            updateCount();
             if (follow.checked) log.scrollTop = log.scrollHeight;
         },
     };
 }
 module.exports = createTaskLog;
+

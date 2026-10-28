@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          易学网课助手｜超星学习通·知到智慧树｜全能题库·章节任务辅助
 // @namespace     易学团队
-// @version       4.1.18
+// @version       4.1.19
 // @description   🏆【易学·超星学习通助手】🚀 支持超星学习通、兼容知到智慧树！【📚题库 + 🤖AI双引擎】支持单选、多选、判断、填空题智能查询与辅助填写，题库匹配结合AI参考答案，轻松应对学习难题！【⚡智能课程辅助】视频倍速播放、自动切换章节任务、文档图书任务辅助、章节测验自动填写；兼容的作业与考试页面支持智能查题、辅助填写及自动切换下一题！【🎯便捷操作】可视化控制台、实时运行日志、悬浮窗控制、任务自由开关！一键安装，简单易用，脚本本体免费，持续维护优化！
 // @author        三街网络
 // @copyright     2026 三街网络，保留所有权利
@@ -10,10 +10,52 @@
 // @homepageURL   https://www.yxzs.love/
 // @updateURL     https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.meta.js
 // @downloadURL   https://raw.githubusercontent.com/zxkj2022/yixue-chaoxing-assistant/main/dist/%E6%98%93%E5%AD%A6%E8%B6%85%E6%98%9F%E5%AD%A6%E4%B9%A0%E9%80%9A%E5%8A%A9%E6%89%8B.user.js
-// @icon          https://www.yxzs.love/assets/yixue-logo.png
+// @icon          https://www.yxzs.love/assets/yixue-logo.png?v=20261028
+// @icon64        https://www.yxzs.love/assets/yixue-logo.png?v=20261028
 // @run-at        document-end
 // @storageName   易学团队
-// @match         *://*/*
+// @match         *://*.chaoxing.com/*
+// @match         *://*.zhihuishu.com/*
+// @match         *://*.xueyinonline.com/*
+// @match         *://hike-teaching-center.polymas.com/*
+// @match         *://mooc.s.ecust.edu.cn/*
+// @match         *://mooc1.cqrspx.cn/*
+// @match         *://mooc1.cugbonline.cn/*
+// @match         *://mooc1.ecnusole.com/*
+// @match         *://mooc1.gdhkmooc.com/*
+// @match         *://mooc1.hncj.edu.cn/*
+// @match         *://mooc1.hnsyu.net/*
+// @match         *://mooc1.hnust.edu.cn/*
+// @match         *://mooc1.hnvist.cn/*
+// @match         *://mooc1.jxjyzx.xust.edu.cn/*
+// @match         *://mooc1.ntu.edu.cn/*
+// @match         *://mooc1.qutjxjy.cn/*
+// @match         *://mooc1.wht.zjelib.cn/*
+// @match         *://mooc1.wljx.hfut.edu.cn/*
+// @match         *://mooc1.xust.edu.cn/*
+// @match         *://mooc1.xynu.edu.cn/*
+// @match         *://mooc1.ynny.cn/*
+// @match         *://mooc1.zut.edu.cn/*
+// @match         *://stat2-ans.cqrspx.cn/*
+// @match         *://stat2-ans.cugbonline.cn/*
+// @match         *://stat2-ans.ecnusole.com/*
+// @match         *://stat2-ans.gdhkmooc.com/*
+// @match         *://stat2-ans.hncj.edu.cn/*
+// @match         *://stat2-ans.hnsyu.net/*
+// @match         *://stat2-ans.hnust.edu.cn/*
+// @match         *://stat2-ans.hnvist.cn/*
+// @match         *://stat2-ans.istudy.szpu.edu.cn/*
+// @match         *://stat2-ans.jxjyzx.xust.edu.cn/*
+// @match         *://stat2-ans.jxzsxx.jxrtvu.com/*
+// @match         *://stat2-ans.ntu.edu.cn/*
+// @match         *://stat2-ans.qutjxjy.cn/*
+// @match         *://stat2-ans.wht.zjelib.cn/*
+// @match         *://stat2-ans.wljx.hfut.edu.cn/*
+// @match         *://stat2-ans.xust.edu.cn/*
+// @match         *://stat2-ans.xynu.edu.cn/*
+// @match         *://stat2-ans.ynny.cn/*
+// @match         *://stat2-ans.zut.edu.cn/*
+// @match         *://webvpn.ahmu.edu.cn/*
 // @grant         unsafeWindow
 // @grant         GM_xmlhttpRequest
 // @grant         GM_info
@@ -22,6 +64,7 @@
 // @grant         GM_addStyle
 // @grant         GM_registerMenuCommand
 // @grant         GM_notification
+// @connect       self
 // @connect       mooc1.wljx.hfut.edu.cn
 // @connect       mooc1.chaoxing.com
 // @connect       mooc1-1.chaoxing.com
@@ -102,5 +145,8 @@
 // @connect       tk.sanzwk.com
 // @connect       api.sanzwk.com
 // @connect       raw.githubusercontent.com
+// @connect       stat2-ans.jxzsxx.jxrtvu.com
 // @license       禁止二开
+// @include       /^https?:\/\/(?:mooc[12](?:-ans|-api|-[0-9]+)?|stat[12]-ans)\.(?:[a-z0-9-]+\.)+edu\.cn(?::[0-9]+)?\//
+// @include       /^https?:\/\/(?:webvpn[0-9]*|vpn[0-9]*)\.(?:[a-z0-9-]+\.)+edu\.cn(?::[0-9]+)?\/https?\/(?:[0-9]{1,5}\/)?[a-z0-9]+\/(?:mooc(?:[12]-ans|-ans)?\/)?(?:mycourse|knowledge|ananas|work|exam|mooc2|course|modules|api\/work)(?:\/|[?#]|$)/
 // ==/UserScript==

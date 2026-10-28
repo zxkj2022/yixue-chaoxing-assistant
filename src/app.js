@@ -3,7 +3,7 @@ const createQuestionBankClient = require('./core/question-bank');
 const createCourseAccess = require('./core/access');
 const { createSettings } = require('./core/settings');
 const { createTransport } = require('./core/transport');
-const { classifyPage, readCourseContext, consoleUrl } = require('./core/routes');
+const { classifyPage, readCourseContext, consoleUrl, isSupportedSite } = require('./core/routes');
 const { claimCourseSurface, isManagedQuestionFrame } = require('./core/ownership');
 const { createCollection } = require('./core/collection');
 const { toText, abortError, disposableScope } = require('./core/primitives');
@@ -21,14 +21,24 @@ const { createScriptGuard } = require('./core/script-guard');
 const { createUpdateChecker } = require('./core/updates');
 const { support } = require('./core/product');
 const showScriptConflict = require('./ui/conflict');
+const restoreTargets = new WeakSet();
+const menuTargets = new WeakMap();
 
-async function bootstrap() {
-    if (isManagedQuestionFrame(window)) return;
+async function bootstrap({ restored = false } = {}) {
+    if (!isSupportedSite(location.href) || isManagedQuestionFrame(window)) return;
     const zhihuishu = classifyZhihuishu(location.href);
     const route = zhihuishu === 'questions' ? 'exam' : zhihuishu ? 'zhihuishu-' + zhihuishu : classifyPage(location.href);
     const reviewPage = isReviewPath(location.href) || (['work', 'exam', 'other'].includes(route) && isReviewDocument(document));
     const questionPage = reviewPage || ['work', 'exam', 'zhihuishu-study'].includes(route) || /\/(?:work\/phone\/work|modules\/work\/index\.html)/.test(location.pathname);
     if (route === 'other' && !questionPage) return;
+    if (!restoreTargets.has(window)) {
+        restoreTargets.add(window);
+        window.addEventListener('pageshow', event => {
+            if (event.persisted && !document.documentElement.dataset.yixueBooted) {
+                void bootstrap({ restored: true }).catch(error => { if (error.name !== 'AbortError') console.error('[易学助手]', error); });
+            }
+        });
+    }
     const lifetime = disposableScope();
     let activeController, questionFrame, collection, ui;
     const guard = createScriptGuard({ document, window, pageWindow: unsafeWindow, onConflict: () => {
@@ -38,7 +48,9 @@ async function bootstrap() {
     lifetime.add(() => guard.destroy());
     if (guard.signal.aborted) { lifetime.dispose(); return; }
     document.documentElement.dataset.yixueBooted = '1';
-    if (route === 'entry' && !await claimCourseSurface(window, document)) { lifetime.dispose(); return; }
+    lifetime.add(() => { delete document.documentElement.dataset.yixueBooted; });
+    lifetime.listen(window, 'pagehide', () => { activeController?.abort(); collection?.dispose(); ui?.destroy(); lifetime.dispose(); });
+    if (route === 'entry' && !await claimCourseSurface(window, document, { signal: guard.signal })) { lifetime.dispose(); return; }
     guard.assertAllowed();
     const store = { read: (key, fallback) => GM_getValue(key, fallback), write: (key, value) => GM_setValue(key, value) };
     const settings = createSettings(store);
@@ -61,10 +73,15 @@ async function bootstrap() {
     lifetime.add(() => updates.destroy());
     ui = createUi({ document, window, bank, access, settings, updates, onTokenSaved: () => collection.send() });
     if (releaseDashboardPage) lifetime.add(releaseDashboardPage);
-    lifetime.listen(window, 'pagehide', () => { activeController?.abort(); collection.dispose(); ui.destroy(); lifetime.dispose(); });
     if (window.top === window) void updates.check();
-    function menu(name, handler) { if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(name, handler); }
-    menu('设置搜题 Token', () => ui.requestApiToken());
+    let menu = menuTargets.get(window);
+    if (!menu) { menu = { ui: null, registered: false }; menuTargets.set(window, menu); }
+    menu.ui = ui;
+    if (!menu.registered && typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('设置搜题 Token', () => menu.ui?.requestApiToken());
+        menu.registered = true;
+    }
+    lifetime.add(() => { if (menu.ui === ui) menu.ui = null; });
     if (questionPage) {
         void collection.send().catch(() => {});
         let timer;
@@ -80,10 +97,15 @@ async function bootstrap() {
         const favicon = document.createElement('link');
         favicon.rel = 'icon'; favicon.href = require('./ui/logo');
         (document.head || document.documentElement).append(favicon);
+        lifetime.add(() => favicon.remove());
     }
     if (reviewPage) return;
 
     function openChapterQuestions(href, { signal } = {}) {
+        if (signal?.aborted) return Promise.reject(abortError());
+        if (document.querySelectorAll('.yixue-chapter-question-view[data-retained="true"]').length >= 3) {
+            return Promise.reject(Object.assign(new Error('已有 3 个待核对的章节测验页面，已停止本轮任务。请先核对并保存这些答案，再刷新控制台继续。'), { stopCourse: true }));
+        }
         if (questionFrame?.dataset.retained === 'true') {
             questionFrame.dataset.previous = 'true';
             questionFrame.querySelector('iframe').style.minHeight = '360px';
@@ -239,18 +261,27 @@ async function bootstrap() {
         const panel = ui.showQuestionPanel({ title: route.startsWith('exam') ? '考试参考答案' : '作业参考答案', onConnect: () => ui.requestApiToken(), onRefresh: () => bank.refreshBalance({ force: true }), onAiToggle: enabled => settings.set('doAI', enabled) });
         if (route.endsWith('-list')) { panel.log(route === 'work-list' ? '脚本准备就绪，请进入作业' : '脚本准备就绪，请进入考试'); return; }
         if (!bank.getToken()) { panel.log('题库未连接，请保存题库 Token 后刷新页面。', 'warning'); return; }
-        const controller = new AbortController(); activeController = controller;
-        const workflow = createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog: panel.log, waitIfPaused: panel.waitIfPaused, onCollect: collection.send });
         const state = document.createElement('p'); state.dataset.yixueQuestionState = ''; state.style.cssText = 'margin:8px;font:13px sans-serif'; panel.element.append(state);
-        try {
-            const result = route === 'exam'
-                ? await require('./questions/navigation').runQuestionPages(workflow, document, { signal: controller.signal, waitIfPaused: panel.waitIfPaused, onPage: pageResult => panel.setSummary(pageResult) })
-                : await workflow.run(document, { signal: controller.signal });
-            panel.setSummary(result);
-            state.textContent = result.stopped ? '查询已停止，请查看日志核对题目加载、账户或额度。' : result.answered ? '已填写 ' + result.answered + ' 道参考答案，请人工核对。' : '没有确认写入参考答案，请查看题目日志。';
-            panel.log(result.answered ? route === 'work' ? '本次参考答案填写结束，请核对后保存或提交。' : '本次参考答案填写结束，请核对后继续，最终交卷由你确认。' : '本次没有确认填写答案，请检查未命中或未写入的具体原因。', result.answered ? 'info' : 'warning');
-        } catch (error) { panel.log('答题流程已停止：' + error.message, 'danger'); }
-        finally { if (activeController === controller) activeController = null; }
+        const answer = async () => {
+            if (activeController || !guard.check()) return;
+            const controller = new AbortController(); activeController = controller;
+            const workflow = createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog: panel.log, waitIfPaused: panel.waitIfPaused, onCollect: collection.send });
+            try {
+                const result = route === 'exam'
+                    ? await require('./questions/navigation').runQuestionPages(workflow, document, { signal: controller.signal, waitIfPaused: panel.waitIfPaused, onPage: pageResult => panel.setSummary(pageResult) })
+                    : await workflow.run(document, { signal: controller.signal });
+                panel.setSummary(result);
+                state.textContent = result.stopped ? '查询已停止，请查看日志核对题目加载、账户或额度。' : result.answered ? '已填写 ' + result.answered + ' 道参考答案，请人工核对。' : '没有确认写入参考答案，请查看题目日志。';
+                panel.log(result.answered ? route === 'work' ? '本次参考答案填写结束，请核对后保存或提交。' : '本次参考答案填写结束，请核对后继续，最终交卷由你确认。' : '本次没有确认填写答案，请检查未命中或未写入的具体原因。', result.answered ? 'info' : 'warning');
+            } catch (error) { panel.log('答题流程已停止：' + error.message, 'danger'); }
+            finally { if (activeController === controller) activeController = null; }
+        };
+        if (restored) {
+            panel.log('页面已从浏览器缓存恢复，未自动重新查题。请先核对已有答案，需要重新查询时再点击“查询当前页面”。', 'warning');
+            const resume = document.createElement('button'); resume.type = 'button'; resume.className = 'yixue-panel-button'; resume.textContent = '查询当前页面';
+            resume.addEventListener('click', async () => { resume.disabled = true; try { await answer(); } finally { resume.disabled = false; } });
+            panel.element.querySelector('.yixue-question-actions').append(resume);
+        } else await answer();
         return;
     }
 
@@ -266,3 +297,4 @@ async function bootstrap() {
     }
 }
 module.exports = { bootstrap };
+

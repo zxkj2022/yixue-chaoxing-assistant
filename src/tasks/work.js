@@ -1,5 +1,25 @@
 'use strict';
 const { observeHostActions } = require('../platform/host-actions');
+const { abortError } = require('../core/primitives');
+
+function invokeHost(host, method, signal) {
+    return new Promise((resolve, reject) => {
+        let settled = false, timer;
+        const finish = (error, value) => {
+            if (settled) return;
+            settled = true; clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+            error ? reject(error) : resolve(value);
+        };
+        const cancel = () => finish(signal?.reason || abortError());
+        if (signal?.aborted) { cancel(); return; }
+        signal?.addEventListener('abort', cancel, { once: true });
+        timer = setTimeout(() => finish(Object.assign(new Error('平台保存或提交调用超时，已停止本轮任务。请核对保留的测验页面后再启动。'), { stopCourse: true })), 10000);
+        Promise.resolve().then(() => {
+            if (signal?.aborted) throw signal.reason || abortError();
+            return host[method]();
+        }).then(value => finish(null, value), error => finish(error instanceof Error ? error : new Error('平台操作失败，请在测验页面核对。')));
+    });
+}
 
 async function runWork(task, env) {
     if (!env.bank || typeof env.bank.getToken !== 'function' || !env.bank.getToken()) {
@@ -16,6 +36,7 @@ async function runWork(task, env) {
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, String(value));
     const page = await env.questions.openPage(url.href, { signal: env.signal });
     const result = await env.questions.run(page.document, { signal: env.signal, apply: true });
+    if (result.answered) page.retain?.();
     if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
     if (result.stopped) {
         env.log('章节查询已停止，本次不自动保存或提交，请人工核对：' + env.name, 'warning');
@@ -32,15 +53,14 @@ async function runWork(task, env) {
     const threshold = Number(env.settings.get('vgqtlv', 80));
     const canSubmit = env.settings.get('autoSubmit', false) && Number.isFinite(threshold) && result.accuracy >= threshold && typeof host?.toadd === 'function' && typeof host?.submitAction === 'function';
     if (canSubmit || typeof host?.noSubmit === 'function') {
-        page.retain?.();
         const observation = observeHostActions(host, { signal: env.signal });
         try {
             if (canSubmit) {
-                await host.toadd();
+                await invokeHost(host, 'toadd', env.signal);
                 if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
                 observation.beginAction();
-                await host.submitAction();
-            } else await host.noSubmit();
+                await invokeHost(host, 'submitAction', env.signal);
+            } else await invokeHost(host, 'noSubmit', env.signal);
             observation.actionsInvoked();
             const state = await observation.result;
             if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
@@ -53,3 +73,4 @@ async function runWork(task, env) {
 }
 
 module.exports = { runWork };
+

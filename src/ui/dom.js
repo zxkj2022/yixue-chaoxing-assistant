@@ -28,11 +28,17 @@ function brand(document, logoUrl, className) {
     return element(document, 'span', { className }, [image]);
 }
 
+function logText(message) {
+    const text = String(message ?? '');
+    return text.length > 4000 ? text.slice(0, 4000) + '…（内容过长已截断）' : text;
+}
+
 function appendLog(document, target, message, tone = 'info') {
-    const line = element(document, 'div', { className: 'yixue-log-line', text: message, 'data-tone': tone });
+    const line = element(document, 'div', { className: 'yixue-log-line', text: logText(message), 'data-tone': tone });
     target.append(line);
     while (target.childElementCount > 500) target.firstElementChild.remove();
     target.scrollTop = target.scrollHeight;
 }
 
-module.exports = { element, button, brand, appendLog };
+module.exports = { element, button, brand, appendLog, logText };
+

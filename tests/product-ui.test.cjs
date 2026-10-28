@@ -28,6 +28,11 @@ async function fixture(t, { conflict = '', width = 390 } = {}) {
         window.GM_registerMenuCommand = () => {};
         if (conflict === 'reference') window.checkConcurrency = [6];
         if (conflict === 'dom') { const other = document.createElement('div'); other.id = 'ocs-app'; document.body.append(other); }
+        if (conflict === 'shadow' || conflict === 'empty-shadow') {
+            const other = document.createElement('div'); other.id = 'abc-helper-root'; document.body.append(other);
+            const shadow = other.attachShadow({ mode: 'open' });
+            if (conflict === 'shadow') shadow.innerHTML = '<div id="abc-helper-app">网课助手</div>';
+        }
         if (conflict === 'old') document.documentElement.dataset.yixueBooted = '1';
     }, { conflict, metadata });
     await page.addScriptTag({ content: bundle({ testing: true, compact: true }) });
@@ -41,7 +46,7 @@ for (const width of [320, 390, 1440]) test('support, ownership, exclusivity and 
     assert.equal(await page.locator('.yixue-brand-name').innerText(), '易学·超星学习通助手');
     assert.match(await page.locator('.yixue-activity-card').innerText(), /有任何使用疑问.*952042950/s);
     assert.match(await page.locator('.yx-script-rule').innerText(), /禁止.*其他网课脚本.*同时运行/);
-    assert.doesNotMatch(await page.locator('#yixue-course-dashboard').innerText(), /三街网络|二次开发|第三方组件|🏆/);
+    assert.doesNotMatch(await page.locator('#yixue-course-dashboard').innerText(), /三街网络|二次开发|第三方组件|🏆|ABC|九九/i);
     assert.equal(await page.getByRole('link', { name: '安装新版' }).getAttribute('href'), metadata.downloadURL);
     assert.equal(await page.getByRole('link', { name: '脚本猫发布页' }).getAttribute('href'), 'https://scriptcat.org/zh-CN/script-show-page/8747');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -50,7 +55,7 @@ for (const width of [320, 390, 1440]) test('support, ownership, exclusivity and 
     if (width !== 320) await page.screenshot({ path: 'artifacts/product-' + width + '.png', fullPage: true });
 });
 
-for (const conflict of ['reference', 'dom', 'old']) test('detected concurrent scripts block startup: ' + conflict, async t => {
+for (const conflict of ['reference', 'dom', 'old', 'shadow', 'empty-shadow']) test('detected concurrent scripts block startup: ' + conflict, async t => {
     const page = await fixture(t, { conflict });
     await page.getByRole('alertdialog', { name: '网课脚本冲突，已阻止运行' }).waitFor();
     assert.equal(await page.locator('#yixue-run-course').count(), 0);
@@ -59,7 +64,7 @@ for (const conflict of ['reference', 'dom', 'old']) test('detected concurrent sc
     assert.match(await page.locator('#yixue-script-conflict').innerText(), /952042950/);
 });
 
-for (const conflict of ['dom', 'reference', 'duplicate', 'frame']) test('late conflicts stop running work and prevent restart: ' + conflict, async t => {
+for (const conflict of ['dom', 'reference', 'duplicate', 'frame', 'shadow', 'shadow-frame']) test('late conflicts stop running work and prevent restart: ' + conflict, async t => {
     const page = await fixture(t);
     await page.locator('#yixue-run-course').click();
     await page.waitForFunction(() => catalogRequests.length === 1);
@@ -70,6 +75,12 @@ for (const conflict of ['dom', 'reference', 'duplicate', 'frame']) test('late co
         if (conflict === 'frame') {
             const frame = document.createElement('iframe'); document.body.append(frame);
             const other = frame.contentDocument.createElement('div'); other.id = 'ocs-app'; frame.contentDocument.body.append(other);
+        }
+        if (conflict === 'shadow' || conflict === 'shadow-frame') {
+            let target = document;
+            if (conflict === 'shadow-frame') { const frame = document.createElement('iframe'); document.body.append(frame); target = frame.contentDocument; }
+            const other = target.createElement('div'); other.id = 'abc-helper-root'; target.body.append(other);
+            other.attachShadow({ mode: 'closed' });
         }
     }, conflict);
     await page.getByRole('alertdialog', { name: '网课脚本冲突，已阻止运行' }).waitFor();
@@ -83,6 +94,7 @@ test('unrelated page text and ordinary platform controls do not trigger the guar
     await page.evaluate(() => {
         const node = document.createElement('p'); node.textContent = 'OCS、其他网课脚本的介绍'; document.body.append(node);
         const helper = document.createElement('div'); helper.id = 'translation-helper-root'; helper.textContent = '网页翻译工具'; document.body.append(helper);
+        helper.attachShadow({ mode: 'open' }).innerHTML = '<div>网页翻译工具</div>';
     });
     await page.locator('#yixue-run-course').click();
     await page.waitForFunction(() => catalogRequests.length === 1);

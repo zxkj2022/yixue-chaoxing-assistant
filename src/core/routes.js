@@ -1,5 +1,23 @@
 'use strict';
 const { parseCookie } = require('./primitives');
+const metadata = require('../metadata.json');
+const siteHosts = [].concat(metadata.match).map(pattern => /^\*:\/\/([^/]+)\/\*$/.exec(pattern)?.[1]).filter(Boolean);
+const siteIncludes = [].concat(metadata.include || []).map(pattern => {
+    const match = /^\/(.+)\/([a-z]*)$/.exec(pattern);
+    return new RegExp(match[1], match[2] || 'i');
+});
+function isSupportedSite(href) {
+    try {
+        const url = new URL(href);
+        if (!/^https?:$/.test(url.protocol) || url.username || url.password) return false;
+        return siteHosts.some(host => host === url.hostname || (host.startsWith('*.') && (url.hostname === host.slice(2) || url.hostname.endsWith(host.slice(1)))))
+            || siteIncludes.some(pattern => pattern.test(url.href));
+    } catch { return false; }
+}
+
+function vpnPrefix(pathname) {
+    return pathname.match(/^(.*\/https?\/(?:\d{1,5}\/)?[a-z0-9]+)(?:\/|$)/i)?.[1] || '';
+}
 function classifyPage(href) {
     const path = new URL(href).pathname;
     if (/\/mycourse\/(?:stu|studentcourse)\/?$/.test(path)) return 'entry';
@@ -32,7 +50,7 @@ function studyOrigin(url, serverHost, prefix) {
 function readCourseContext(href, { title = '', cookie = '', document: page, serverHost = '' } = {}) {
     const url = new URL(href);
     const param = (...keys) => keys.map(key => url.searchParams.get(key)).find(Boolean) || '';
-    const prefix = url.pathname.match(/^(.*\/https\/[a-z0-9]+)(?:\/|$)/i)?.[1] || '';
+    const prefix = vpnPrefix(url.pathname);
     return {
         origin: studyOrigin(url, serverHost, prefix),
         prefix,
@@ -47,4 +65,5 @@ function consoleUrl(context) {
     for (const [key, value] of Object.entries({ ut: 's', classid: context.classId, courseid: context.courseId, cpi: context.cpi, coursename: context.courseName, uid: context.uid })) url.searchParams.set(key, value || '');
     return url.href;
 }
-module.exports = { classifyPage, readCourseContext, consoleUrl };
+module.exports = { classifyPage, readCourseContext, consoleUrl, isSupportedSite, vpnPrefix };
+

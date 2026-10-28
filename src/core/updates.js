@@ -37,7 +37,7 @@ function createUpdateChecker({ request, store = { read: (key, fallback) => fallb
     parseVersion(currentVersion);
     const subscribers = new Set();
     let snapshot = { status: 'idle', currentVersion, downloadURL: metadata.downloadURL };
-    let flight = null, handle = null, cancel = null, destroyed = false;
+    let flight = null, handle = null, cancel = null, timer, destroyed = false;
     const publish = patch => {
         snapshot = { ...snapshot, ...patch };
         for (const listener of subscribers) { try { listener(snapshot); } catch {} }
@@ -62,6 +62,7 @@ function createUpdateChecker({ request, store = { read: (key, fallback) => fallb
         const finish = (error, version) => {
             if (settled) return;
             settled = true;
+            clearTimeout(timer); timer = null;
             const result = error ? { status: 'error', error: error.message, latestVersion: '' } : success(version);
             if (!destroyed) {
                 try { store.write(CACHE_KEY, { checkedAt: now(), version: version || '', error: error?.message || '' }); } catch {}
@@ -71,6 +72,11 @@ function createUpdateChecker({ request, store = { read: (key, fallback) => fallb
             resolveFlight(snapshot);
         };
         cancel = () => finish(new Error('脚本更新检查已取消'));
+        timer = setTimeout(() => {
+            const abort = handle;
+            finish(new Error('脚本更新检查超时，请稍后重试'));
+            try { abort?.abort?.(); } catch {}
+        }, 10000);
         try {
             handle = request({ method: 'GET', url: metadata.updateURL, anonymous: true, responseType: 'text', timeout: 10000,
                 headers: { Accept: 'text/plain', 'Cache-Control': 'no-cache' },

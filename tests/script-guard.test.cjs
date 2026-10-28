@@ -14,7 +14,7 @@ function fixture({ secure = true } = {}) {
         setInterval: callback => { timers.set(1, callback); return 1; }, clearInterval: key => timers.delete(key),
     };
     return { document, window, timers, attributes, guard: () => createScriptGuard({ document, window, onConflict: () => { conflicts++; } }),
-        mutate: () => observe(), conflicts: () => conflicts, disconnected: () => disconnected };
+        mutate: records => observe(records), conflicts: () => conflicts, disconnected: () => disconnected };
 }
 
 test('a standalone script can run on secure and HTTP pages and releases its observers', () => {
@@ -62,4 +62,32 @@ test('frame scanning tolerates inaccessible windows, cycles and missing document
     assert.equal(hasForeignScript(f.document, f.window), false);
     child.window.checkConcurrency = [6];
     assert.equal(hasForeignScript(f.document, f.window), true);
+});
+
+test('helper shadows and same-origin ancestors are inspected without looping', () => {
+    const f = fixture(), shadow = fixture(), parent = fixture();
+    shadow.document.textContent = '网课助手';
+    f.document.helpers.push({ closest: () => null, textContent: '', shadowRoot: shadow.document });
+    assert.equal(hasForeignScript(f.document, f.window), true);
+    shadow.document.textContent = ''; shadow.document.foreign.push({ closest: () => null });
+    assert.equal(hasForeignScript(f.document, f.window), true);
+    f.document.helpers.length = 0;
+    parent.window.document = parent.document; f.window.parent = parent.window;
+    parent.document.frames.push({ contentDocument: f.document, contentWindow: f.window });
+    assert.equal(hasForeignScript(f.document, f.window), false);
+    parent.document.foreign.push({ closest: () => null });
+    assert.equal(hasForeignScript(f.document, f.window), true);
+    Object.defineProperty(f.window, 'parent', { get() { throw Error('cross origin'); } });
+    assert.equal(hasForeignScript(f.document, f.window), false);
+});
+
+test('frequent UI-only mutations skip scanning while the periodic guard stays active', () => {
+    const f = fixture(), guard = f.guard();
+    f.document.foreign.push({ closest: () => null });
+    const record = { target: { nodeType: 1, closest: () => ({ id: 'yixue-ui-root' }) } };
+    for (let i = 0; i < 1000; i++) f.mutate([record]);
+    assert.equal(f.conflicts(), 0);
+    [...f.timers.values()][0]();
+    assert.equal(f.conflicts(), 1); assert.equal(guard.signal.aborted, true);
+    guard.destroy();
 });

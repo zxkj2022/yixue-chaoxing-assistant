@@ -99,6 +99,25 @@ test('closing a page aborts an active check and settles its promise', async () =
     assert.equal(f.requests.length, 1);
 });
 
+test('an update request with no callbacks times out, releases its handle and can be retried', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { createUpdateChecker } = require('../src/core/updates');
+    let aborted = 0, requests = 0;
+    const checker = createUpdateChecker({ request: () => { requests++; return { abort() { aborted++; } }; } });
+    t.after(() => checker.destroy());
+    const pending = checker.check();
+    t.mock.timers.tick(10001);
+    assert.equal(checker.state().status, 'error');
+    assert.match(checker.state().error, /超时/);
+    await pending;
+    assert.equal(aborted, 1);
+    const retry = checker.check({ force: true });
+    assert.equal(requests, 2);
+    checker.destroy(); await retry;
+    t.mock.timers.tick(20000);
+    assert.equal(aborted, 2);
+});
+
 test('bundled identity and update versions follow the same metadata source', () => {
     const { bundle } = require('../scripts/build.cjs');
     const source = bundle({ testing: true });
