@@ -12,7 +12,7 @@ function showScriptConflict({ document, window }) {
         button(document, '停用其他脚本后刷新页面', () => window.location.reload()),
     ]);
     box.style.cssText = 'position:fixed;z-index:2147483647;inset:0;box-sizing:border-box;padding:clamp(18px,6vw,60px);background:#f5f7fb;color:#1d2a40;font:16px/1.8 system-ui,sans-serif;overflow:auto;white-space:normal;word-break:break-word;';
-    const style = element(document, 'style', { text: '#yixue-script-conflict>*{display:block;box-sizing:border-box;max-width:680px;margin:16px auto;white-space:normal}#yixue-script-conflict h2{font-size:24px;line-height:1.5}#yixue-script-conflict button{padding:12px 20px;border:0;border-radius:12px;background:#3478f6;color:#fff;font:inherit;cursor:pointer;min-height:48px}' });
+    const style = element(document, 'style', { text: '#yixue-script-conflict>:not(style){display:block;box-sizing:border-box;max-width:680px;margin:16px auto;white-space:normal}#yixue-script-conflict h2{font-size:24px;line-height:1.5}#yixue-script-conflict button{padding:12px 20px;border:0;border-radius:12px;background:#3478f6;color:#fff;font:inherit;cursor:pointer;min-height:48px}' });
     box.append(style);
     (document.body || document.documentElement).append(box);
     box.querySelector('button').focus();

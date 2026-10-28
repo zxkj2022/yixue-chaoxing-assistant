@@ -3,6 +3,9 @@ const { metadata } = require('./product');
 const CACHE_KEY = 'yixueScriptUpdateV1';
 const INTERVAL = 12 * 3600000;
 const ERROR_INTERVAL = 15 * 60000;
+// Keep metadata delimiters split: script marketplaces may rewrite every full block.
+const MANIFEST_OPEN = '// ==' + 'UserScript==';
+const MANIFEST_CLOSE = '// ==/' + 'UserScript==';
 const legacyName = '易学·超星学习通助手[AI答题][一键启动][最小化运行]';
 function parseVersion(value) {
     if (typeof value !== 'string' || !/^\d{1,9}(?:\.\d{1,9}){0,3}$/.test(value)) throw new Error('更新清单版本号无效');
@@ -17,8 +20,8 @@ function compareVersions(left, right) {
     return 0;
 }
 function readManifest(source) {
-    if (typeof source !== 'string' || source.length > 12000 || !source.startsWith('// ==UserScript==')) throw new Error('未取得有效的脚本更新清单');
-    const end = source.indexOf('// ==/UserScript==');
+    if (typeof source !== 'string' || source.length > 12000 || !source.startsWith(MANIFEST_OPEN)) throw new Error('未取得有效的脚本更新清单');
+    const end = source.indexOf(MANIFEST_CLOSE);
     if (end < 0) throw new Error('脚本更新清单不完整');
     const header = source.slice(0, end);
     const field = key => {

@@ -1,6 +1,6 @@
 {
   "name": "yixue-assistant-userscript",
-  "version": "4.1.17",
+  "version": "4.1.18",
   "private": true,
   "engines": { "node": ">=22.18.0" },
   "devDependencies": { "playwright": "1.62.1" },
@@ -8,6 +8,6 @@
     "build": "node scripts/build.cjs",
     "test": "node --test tests/regressions.test.cjs tests/api-protocol.test.cjs tests/api-connectivity.test.cjs tests/video-protocol.test.cjs tests/updates.test.cjs tests/script-updates.test.cjs tests/script-guard.test.cjs tests/screen-awake.test.cjs",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include **/src/core/question-bank.js --test-coverage-include **/src/core/updates.js --test-coverage-include **/src/core/script-guard.js --test-coverage-include **/src/tasks/video*.js --test-coverage-include **/src/ui/connection.js --test-coverage-lines 80 --test-coverage-branches 80 --test-coverage-functions 80 tests/regressions.test.cjs tests/api-protocol.test.cjs tests/api-connectivity.test.cjs tests/video-protocol.test.cjs tests/script-updates.test.cjs tests/script-guard.test.cjs",
-    "test:ui": "node --test --test-concurrency=1 tests/dashboard.test.cjs tests/product-ui.test.cjs tests/mobile-dashboard.test.cjs tests/exam-boundaries.test.cjs tests/question-compat.test.cjs tests/encrypted-font.test.cjs tests/answer-collection.test.cjs tests/reference-compat.test.cjs"
+    "test:ui": "node --test --test-concurrency=1 tests/dashboard.test.cjs tests/product-ui.test.cjs tests/distribution.test.cjs tests/mobile-dashboard.test.cjs tests/exam-boundaries.test.cjs tests/question-compat.test.cjs tests/encrypted-font.test.cjs tests/answer-collection.test.cjs tests/reference-compat.test.cjs"
   }
 }
