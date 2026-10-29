@@ -191,6 +191,7 @@
 .yixue-log-message { color: #53657e; }
 .yixue-log-line[data-tone="success"] .yixue-log-badge { color: #268267; background: #edf8f2; }
 .yixue-log-line[data-tone="warning"] .yixue-log-badge { color: #a4772b; background: #fff6e6; }
+.yixue-log-line[data-tone="pending"] .yixue-log-badge { color: #326dcc; background: #edf3ff; }
 .yixue-log-line[data-tone="error"] .yixue-log-badge { color: #bc4c5a; background: #fff0f2; }
 .yixue-log-line[data-tone="error"] .yixue-log-message { color: #ad4d5b; }
 .yixue-dashboard .yixue-log-empty { display: flex; align-items: center; justify-content: center; min-height: var(--log-height); padding: 20px; color: #8c9ab0; font-size: 12px; text-align: center; }

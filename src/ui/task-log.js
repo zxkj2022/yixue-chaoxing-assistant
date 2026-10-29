@@ -8,7 +8,7 @@ function createTaskLog(document) {
     const follow = element(document, 'input', { type: 'checkbox', checked: true, 'aria-label': '跟随最新日志' });
     const filters = element(document, 'div', { className: 'yixue-log-filters', 'aria-label': '筛选日志' });
     let active = 'all', shown = 0;
-    const matches = line => active === 'all' || (active === 'issues' ? ['error', 'warning'].includes(line.dataset.tone) : line.dataset.tone === 'success');
+    const matches = line => active === 'all' || (active === 'issues' ? ['error', 'warning'].includes(line.dataset.tone) : line.dataset.tone === active);
     const updateCount = () => {
         const total = log.childElementCount;
         log.classList.toggle('is-empty', shown === 0);
@@ -21,7 +21,7 @@ function createTaskLog(document) {
         for (const line of log.children) { line.hidden = !matches(line); if (!line.hidden) shown++; }
         updateCount();
     };
-    for (const [value, label, name] of [['all', '全部', '查看全部记录'], ['issues', '异常', '仅看异常记录'], ['success', '完成', '仅看完成记录']]) {
+    for (const [value, label, name] of [['all', '全部', '查看全部记录'], ['issues', '异常', '仅看异常记录'], ['pending', '待核实', '仅看待核实记录'], ['success', '完成', '仅看完成记录']]) {
         const filter = button(document, label, () => {
             active = value;
             for (const node of filters.children) node.setAttribute('aria-pressed', String(node === filter));
@@ -36,8 +36,8 @@ function createTaskLog(document) {
     return {
         log, toolbar, empty, count,
         append(message, tone = 'info') {
-            const level = ['error', 'danger'].includes(tone) ? 'error' : ['warning', 'warn'].includes(tone) ? 'warning' : ['success', 'skipped'].includes(tone) ? tone : 'info';
-            const labels = { error: '异常', warning: '提示', success: '完成', skipped: '跳过', info: '记录' };
+            const level = ['error', 'danger'].includes(tone) ? 'error' : ['warning', 'warn'].includes(tone) ? 'warning' : ['success', 'skipped', 'pending'].includes(tone) ? tone : 'info';
+            const labels = { error: '异常', warning: '提示', pending: '核验', success: '完成', skipped: '跳过', info: '记录' };
             const now = new Date();
             const line = element(document, 'div', { className: 'yixue-log-line', 'data-tone': level }, [
                 element(document, 'time', { dateTime: now.toISOString(), text: now.toLocaleTimeString('zh-CN', { hour12: false }) }),

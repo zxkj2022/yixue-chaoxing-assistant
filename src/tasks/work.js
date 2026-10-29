@@ -38,6 +38,15 @@ async function runWork(task, env) {
     const result = await env.questions.run(page.document, { signal: env.signal, apply: true });
     if (result.answered) page.retain?.();
     if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
+    if (result.review) {
+        if (await env.verifyCompletion?.()) {
+            page.release?.();
+            env.log('章节测验已确认完成：' + env.name, 'success');
+            return 'confirmed';
+        }
+        env.log('章节测验已处于批阅页面，等待平台确认任务状态：' + env.name, 'pending');
+        return 'pending';
+    }
     if (result.stopped) {
         env.log('章节查询已停止，本次不自动保存或提交，请人工核对：' + env.name, 'warning');
         return result.answered ? 'pending' : 'skipped';
@@ -52,6 +61,7 @@ async function runWork(task, env) {
     const host = page.window;
     const threshold = Number(env.settings.get('vgqtlv', 80));
     const canSubmit = env.settings.get('autoSubmit', false) && Number.isFinite(threshold) && result.accuracy >= threshold && typeof host?.toadd === 'function' && typeof host?.submitAction === 'function';
+    let requestCompleted = false;
     if (canSubmit || typeof host?.noSubmit === 'function') {
         const observation = observeHostActions(host, { signal: env.signal });
         try {
@@ -64,11 +74,18 @@ async function runWork(task, env) {
             observation.actionsInvoked();
             const state = await observation.result;
             if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
-            if (state.completed) page.release?.();
-            else if (typeof page.retain === 'function') env.log('未确认章节保存请求已完成，已保留测验页面，请人工核对：' + env.name, 'warning');
+            requestCompleted = state.completed;
+            if (requestCompleted) page.release?.();
         } finally { observation.dispose(); }
     }
-    env.log('章节测验参考答案已填写' + (canSubmit ? '并请求提交' : '，请人工核对') + '；完成状态待核实：' + env.name, 'warning');
+    if (await env.verifyCompletion?.()) {
+        if (!requestCompleted) page.release?.();
+        env.log('章节测验已确认完成：' + env.name, 'success');
+        return 'confirmed';
+    }
+    if (!requestCompleted && typeof page.retain === 'function') env.log('未确认章节保存请求已完成，已保留测验页面，请人工核对：' + env.name, 'warning');
+    env.log(canSubmit ? '章节测验已请求提交，等待平台确认任务状态：' + env.name
+        : '章节测验参考答案已填写，尚未提交，请人工核对：' + env.name, canSubmit ? 'pending' : 'warning');
     return 'pending';
 }
 

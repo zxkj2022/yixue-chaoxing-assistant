@@ -9,6 +9,7 @@ const { runWork } = require('../tasks/work');
 const { discoverEngineChapters, discoverNonJobChapters } = require('../tasks/discovery');
 
 const CARD_PAGE_LIMIT = 200, EMPTY_PAGE_LIMIT = 10;
+const RECONCILE_INTERVAL = 30000, FINAL_RECONCILE_ATTEMPTS = 2;
 const outcomes = ['confirmed', 'skipped', 'failed', 'pending'];
 const registrations = new Map([
     ['video', { setting: 'doVideo', execute: runVideo }],
@@ -18,7 +19,12 @@ const registrations = new Map([
     ...documentTypes.map(type => [type, { setting: 'doDocument', execute: runDocument }]),
 ]);
 
-function createCourseRunner({ context, transport, settings, bank, questions, emit = () => {}, wait = delay, prepareVideoSession }) {
+function taskIdentity(task) {
+    const id = task?.jobid || task?.property?._jobid || (task?.type === 'workid' ? task?.property?.workid : '');
+    return id ? task.type + ':' + (task.type === 'workid' ? String(id).replace(/^work-/, '') : String(id)) : '';
+}
+
+function createCourseRunner({ context, transport, settings, bank, questions, emit = () => {}, wait = delay, now = Date.now, prepareVideoSession }) {
     let running = false;
     const log = (message, tone = 'info') => emit({ type: 'log', message, tone });
     const progress = percent => emit({ type: 'progress', percent });
@@ -114,28 +120,73 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
             const discovered = [...new Map(sources.map(chapter => [String(chapter.id), chapter])).values()];
             const chapters = discovered.filter(chapter => challenge || chapter.remaining !== 0).map(chapter => ({ ...chapter, unresolved: false, done: false, requiredSeen: 0, outcomes: [] }));
             const counts = () => {
+                summary.chapterIssues = chaptersWithErrors.size;
                 emit({ type: 'counts', total: discovered.length, unconfirmed: chapters.filter(chapter => !chapter.done || chapter.unresolved).length });
                 emit({ type: 'summary', ...summary });
             };
-            let reconciliationWarned = false;
-            const reconcile = async chapter => {
-                if (!chapter.unresolved || (!chapter.outcomes.some(outcome => outcome.job && outcome.result !== 'confirmed') && !chaptersWithErrors.has(chapter.id))) return;
-                try {
-                    const fresh = parseCatalog(await requestText('/mycourse/studentstudycourselist', { courseId: context.courseId, clazzid: context.classId, cpi: context.cpi, mooc2: 1 }));
-                    if (!fresh.some(item => item.id === chapter.id && item.remaining === 0)) return;
-                    chaptersWithErrors.delete(chapter.id);
-                    for (const outcome of chapter.outcomes) if (outcome.job && outcome.result !== 'confirmed') {
-                        summary[outcome.result]--; summary.confirmed++; outcome.result = 'confirmed';
-                    }
-                    chapter.unresolved = chapter.outcomes.some(outcome => outcome.required && outcome.result !== 'confirmed');
-                    if (chapter.unresolved) { log('本章任务点已确认完成，非任务点仍待核实：' + chapter.name, 'warning'); return; }
-                    log('章节已确认完成：' + chapter.name, 'success');
+            let reconciliationWarned = false, lastReconciliation = now(), displayedOutcome = null;
+            const warnReconciliation = () => {
+                if (!reconciliationWarned) { reconciliationWarned = true; log('章节完成状态暂未刷新，保留待处理统计，运行期间会继续核验。', 'warning'); }
+            };
+            const readCard = async (chapter, page, fresh = false) => {
+                const referer = new URL('/mycourse/studentstudy', context.origin);
+                for (const [key, value] of Object.entries({ chapterId: chapter.id, courseId: context.courseId, clazzid: context.classId, cpi: context.cpi, mooc2: 1 })) if (value !== undefined) referer.searchParams.set(key, value);
+                return parseCardData(await requestText('/knowledge/cards', { courseid: context.courseId, clazzid: context.classId, knowledgeid: chapter.id, cpi: context.cpi, num: page, ut: 's', v: '20160407-1', ...(fresh ? { _dc: now() } : {}) }, { Referer: referer.href }));
+            };
+            const passedInCard = (task, card) => {
+                const id = taskIdentity(task);
+                const matches = id && card.kind === 'page' ? card.attachments.filter(candidate => taskIdentity(candidate) === id) : [];
+                return matches.length > 0 && matches.every(candidate => candidate.isPassed === true);
+            };
+            const verifyCompletion = async item => {
+                if (!taskIdentity(item.task)) return false;
+                try { return passedInCard(item.task, await readCard(item.chapter, item.page, true)); }
+                catch (error) { checkSignal(); warnReconciliation(); return false; }
+            };
+            const updateChapter = chapter => {
+                chapter.unresolved = chaptersWithErrors.has(chapter.id) || chapter.outcomes.some(outcome => outcome.result !== 'confirmed' && (outcome.required || outcome.result === 'failed'));
+            };
+            const confirmOutcome = (chapter, outcome) => {
+                if (outcome.result === 'confirmed') return;
+                summary[outcome.result]--; summary.confirmed++; outcome.result = 'confirmed';
+                log('已确认任务完成：' + outcome.name, 'success');
+                // Rechecking an earlier chapter must not replace a running video's UI.
+                if (displayedOutcome === outcome) {
                     progress(100);
-                    emit({ type: 'task', name: chapter.name, chapter: chapter.name, status: 'confirmed', kind: 'chapter' });
+                    emit({ type: 'task', name: outcome.name, chapter: chapter.name, status: 'confirmed', kind: outcome.task.type });
+                }
+            };
+            const reconcile = async (chapter, force = false) => {
+                if (!chapter && !force && now() - lastReconciliation < RECONCILE_INTERVAL) return;
+                const candidates = (chapter ? [chapter] : chapters).filter(item => item.unresolved && (item.outcomes.some(outcome => outcome.result === 'pending' || outcome.job && outcome.result !== 'confirmed') || chaptersWithErrors.has(item.id)));
+                if (!candidates.length) return;
+                if (!chapter) lastReconciliation = now();
+                try {
+                    const fresh = parseCatalog(await requestText('/mycourse/studentstudycourselist', { courseId: context.courseId, clazzid: context.classId, cpi: context.cpi, mooc2: 1, _dc: now() }));
+                    for (const target of candidates) {
+                        if (fresh.some(item => item.id === target.id && item.remaining === 0)) {
+                            chaptersWithErrors.delete(target.id);
+                            for (const outcome of target.outcomes) if (outcome.job) confirmOutcome(target, outcome);
+                        }
+                        const pages = new Map();
+                        for (const outcome of target.outcomes) if (outcome.result === 'pending' && taskIdentity(outcome.task)) {
+                            if (!pages.has(outcome.page)) pages.set(outcome.page, await readCard(target, outcome.page, true));
+                            if (passedInCard(outcome.task, pages.get(outcome.page))) confirmOutcome(target, outcome);
+                        }
+                        updateChapter(target);
+                        if (target.done && !target.unresolved) log('章节已确认完成：' + target.name, 'success');
+                    }
                 } catch (error) {
                     checkSignal();
-                    if (!reconciliationWarned) { reconciliationWarned = true; log('章节完成状态暂未刷新，保留待处理统计，可稍后重新检查。', 'warning'); }
+                    warnReconciliation();
                 }
+                for (const target of candidates) updateChapter(target);
+                counts();
+            };
+            const waitForTask = async (milliseconds, taskSignal) => {
+                await wait(milliseconds, taskSignal);
+                checkSignal();
+                await reconcile();
             };
             const issue = (chapter, message) => { chapter.unresolved = true; chaptersWithErrors.add(chapter.id); log('章节读取异常：' + chapter.name + '；' + message, 'danger'); };
             counts(); progress(0); remaining(null);
@@ -153,6 +204,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
             const queue = chapters.map(chapter => ({ kind: 'cards', chapter, page: 0, empty: 0 }));
             while (queue.length) {
                 checkSignal();
+                await reconcile();
                 const item = queue.shift();
                 const chapter = item.chapter;
                 if (item.kind === 'cards') {
@@ -160,9 +212,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
                     let page;
                     try {
                         if (challenge && item.page === 0) await requestText('/mooc-ans/mycourse/studentstudyAjax', { courseId: context.courseId, clazzid: context.classId, chapterId: chapter.id });
-                        const referer = new URL('/mycourse/studentstudy', context.origin);
-                        for (const [key, value] of Object.entries({ chapterId: chapter.id, courseId: context.courseId, clazzid: context.classId, cpi: context.cpi, mooc2: 1 })) referer.searchParams.set(key, value);
-                        page = parseCardData(await requestText('/knowledge/cards', { courseid: context.courseId, clazzid: context.classId, knowledgeid: chapter.id, cpi: context.cpi, num: item.page, ut: 's', v: '20160407-1' }, { Referer: referer.href }));
+                        page = await readCard(chapter, item.page);
                     } catch (error) { checkSignal(); issue(chapter, error.message); chapter.done = true; counts(); await cooldown(queue, true); continue; }
                     if (page.kind === 'end') {
                         if (chapter.remaining > 0 && !chapter.requiredSeen) issue(chapter, '目录显示仍有任务，但章节内容未返回任务附件，请在学习通核对');
@@ -170,7 +220,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
                     }
                     const empty = page.attachments.length ? 0 : item.empty + 1;
                     if (empty >= EMPTY_PAGE_LIMIT) { issue(chapter, '连续空任务页达到 ' + EMPTY_PAGE_LIMIT + ' 页上限'); chapter.done = true; counts(); continue; }
-                    const tasks = page.attachments.map(task => ({ kind: 'task', chapter, task, defaults: page.defaults }));
+                    const tasks = page.attachments.map(task => ({ kind: 'task', chapter, task, defaults: page.defaults, page: item.page }));
                     queue.unshift(...tasks, { kind: 'cards', chapter, page: item.page + 1, empty });
                     continue;
                 }
@@ -179,6 +229,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
                 const required = Boolean(task?.job || (task?.type === 'workid' && settings.get('doNoMission', false)));
                 if (required) chapter.requiredSeen++;
                 let result;
+                displayedOutcome = null;
                 remaining(null);
                 progress(0);
                 emit({ type: 'task', name, chapter: chapter.name, status: 'running', kind: task?.type || 'unknown' });
@@ -190,18 +241,25 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
                     else if ((!task.job && !nonJobWork) || !registration || !settings.get(registration.setting, true)) { log('已跳过任务：' + name, 'skipped'); result = 'skipped'; }
                     else {
                         if (task.type !== 'video') remaining(null);
-                        result = await registration.execute(task, { context, chapter, defaults: item.defaults, settings, bank, questions, signal, wait, requestText, requestJSON, parseJSON, retry, log, progress, remaining, name, nonJob: nonJobWork, prepareVideoSession });
+                        result = await registration.execute(task, { context, chapter, defaults: item.defaults, settings, bank, questions, signal, wait: waitForTask, requestText, requestJSON, parseJSON, retry, log, progress, remaining, name, nonJob: nonJobWork, verifyCompletion: () => verifyCompletion(item), prepareVideoSession });
                         if (!outcomes.includes(result)) throw new Error('任务处理结果无效');
                     }
                 } catch (error) { checkSignal(); if (error.stopCourse === true) throw error; result = 'failed'; log(name + '：' + error.message, 'danger'); }
                 if (result === 'confirmed') progress(100);
                 summary[result]++;
-                chapter.outcomes.push({ required, job: Boolean(task?.job), result });
+                displayedOutcome = { required, job: Boolean(task?.job), result, task, name, page: item.page };
+                chapter.outcomes.push(displayedOutcome);
                 emit({ type: 'task', name, chapter: chapter.name, status: result, kind: task?.type || 'unknown' });
-                if (result !== 'confirmed' && (required || result === 'failed')) chapter.unresolved = true;
+                updateChapter(chapter);
                 counts();
                 if (result === 'failed' || result === 'skipped') await cooldown(queue, result === 'failed');
                 else failures = 0;
+            }
+            for (let attempt = 0; attempt < FINAL_RECONCILE_ATTEMPTS && chapters.some(chapter => chapter.outcomes.some(outcome => outcome.result === 'pending')); attempt++) {
+                if (!attempt) log('仍有任务等待平台更新完成状态，正在进行最后核验。', 'pending');
+                await wait(3000, signal);
+                checkSignal();
+                await reconcile(null, true);
             }
             summary.chapterIssues = chaptersWithErrors.size;
             counts();

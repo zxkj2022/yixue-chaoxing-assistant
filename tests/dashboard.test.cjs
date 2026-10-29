@@ -46,6 +46,68 @@ test('normal skips are excluded from exceptions, real failures remain', async t 
     await page.getByRole('button', { name: '查看全部记录' }).click();
     assert.equal(await page.getByText('跳过', { exact: true }).count(), 2);
 });
+
+test('submitted quizzes waiting for confirmation have their own filter and stay out of exceptions', async t => {
+    const page = await fixture(t);
+    await page.evaluate(() => {
+        dashboard.log('章节测验已请求提交，等待平台确认：课程一', 'pending');
+        dashboard.log('题源暂不可用，请稍后重试', 'warning');
+        dashboard.log('提交请求失败，请人工核对', 'error');
+        dashboard.log('章节测验已确认完成：课程二', 'success');
+    });
+    await page.getByRole('button', { name: '仅看异常记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 2);
+    assert.equal(await page.getByText('章节测验已请求提交，等待平台确认：课程一').isVisible(), false);
+    await page.getByRole('button', { name: '仅看待核实记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
+    assert.equal(await page.locator('.yixue-log-line:visible .yixue-log-badge').innerText(), '核验');
+    await page.getByRole('button', { name: '仅看完成记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
+});
+
+test('course events update chapter rings and summary after submitted quizzes are confirmed', async t => {
+    const page = await fixture(t, 1440);
+    const summary = await page.evaluate(async () => {
+        const submitted = new Set();
+        const task = id => ({ type: 'workid', job: true, jobid: 'work-' + id, property: { workid: id, name: '章节测验 ' + id }, isPassed: submitted.has(id) });
+        const runner = testLoad('platform/course-engine').createCourseRunner({
+            context: { origin: 'https://mooc1.chaoxing.com', courseId: '101', classId: '202' }, bank,
+            settings: { get: (key, fallback) => ({ autoSubmit: true, doNoMission: false, doRenwu: false })[key] ?? fallback }, wait: async () => {},
+            emit: event => {
+                if (event.type === 'log') dashboard.log(event.message, event.tone);
+                if (event.type === 'counts') dashboard.setCounts(event);
+                if (event.type === 'summary') dashboard.setSummary(event);
+                if (event.type === 'task') dashboard.setTask(event);
+                if (event.type === 'progress') dashboard.setProgress(event.percent);
+            },
+            questions: {
+                openPage: async href => {
+                    const id = new URL(href).searchParams.get('workId');
+                    return { document: {}, window: { toadd() {}, submitAction() { submitted.add(id); } }, retain() {}, release() {} };
+                },
+                run: async () => ({ total: 1, answered: 1, accuracy: 100 }),
+            },
+            transport: { request: async details => {
+                const url = new URL(details.url);
+                const responseText = url.pathname === '/mycourse/studentstudycourselist'
+                    ? ['1', '2', '3'].map(id => '<div id="cur' + id + '"><span class="posCatalog_name">课程 ' + id + '</span><span class="jobUnfinishCount">' + (id === '1' ? 0 : 1) + '</span></div>').join('')
+                    : url.searchParams.get('num') === '0' ? '<script>mArg=' + JSON.stringify({ defaults: {}, attachments: [task(url.searchParams.get('knowledgeid'))] }) + ';</script>' : '<script>mArg=$mArg;</script>';
+                return { status: 200, responseText };
+            } },
+        });
+        return runner.run();
+    });
+    assert.equal(summary.confirmed, 2); assert.equal(summary.pending, 0);
+    assert.equal(await page.locator('#yixue-chapter-progress-value').innerText(), '100%');
+    assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '0');
+    assert.match(await page.locator('.yixue-chapter-count').innerText(), /3 \/ 3 章/);
+    await page.getByRole('button', { name: '仅看异常记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 0);
+    await page.getByRole('button', { name: '仅看完成记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 2);
+    fs.mkdirSync('artifacts', { recursive: true });
+    await page.screenshot({ path: 'artifacts/course-progress-confirmed-1440.png', fullPage: true });
+});
 test('member badges use the returned tier and remain honest with older APIs', async t => {
     const page = await fixture(t);
     for (const [level, expected] of [[1, 'VIP'], [2, 'SVIP'], [3, 'VVIP'], [undefined, '会员']]) {
