@@ -41,8 +41,8 @@ function createUi({ document, window, bank, access, settings, updates, logoUrl =
         if (disposed) return Promise.resolve('');
         if (tokenFlight) return tokenFlight;
         tokenFlight = new Promise(resolve => {
-            const dialog = modal.open({ id: 'yixue-token-dialog', title: '手动填写 Token', subtitle: '填写题库「接口接入」提供的 API Token', compact: true, onClose: value => { tokenFlight = null; resolve(typeof value === 'string' ? value : ''); } });
-            const input = element(document, 'input', { id: 'yixue-api-token', className: 'yx-form-input', type: 'password', autocomplete: 'off', spellcheck: false, value: bank.getToken(), 'aria-label': '搜题 API Token', placeholder: 'ys_…' });
+            const dialog = modal.open({ id: 'yixue-token-dialog', title: '手动填写 Token', subtitle: '完整复制题库「脚本接入」中的 Token，无需添加前缀', compact: true, onClose: value => { tokenFlight = null; resolve(typeof value === 'string' ? value : ''); } });
+            const input = element(document, 'input', { id: 'yixue-api-token', className: 'yx-form-input', type: 'password', autocomplete: 'off', spellcheck: false, value: bank.getToken(), 'aria-label': '搜题 API Token', placeholder: '粘贴完整 Token' });
             const error = element(document, 'p', { className: 'yx-error', role: 'status' });
             const save = button(document, '保存 Token', async () => {
                 error.textContent = '';
@@ -95,3 +95,4 @@ function createUi({ document, window, bank, access, settings, updates, logoUrl =
 }
 
 module.exports = { createUi };
+

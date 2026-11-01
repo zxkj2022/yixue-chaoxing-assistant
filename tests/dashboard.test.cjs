@@ -65,6 +65,18 @@ test('submitted quizzes waiting for confirmation have their own filter and stay 
     assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
 });
 
+test('resolved task logs leave the pending filter and enter completion without duplicate records', async t => {
+    const page = await fixture(t);
+    await page.evaluate(() => dashboard.log('等待平台确认：测验一', 'pending', { key: 'run-1:quiz-1' }));
+    await page.getByRole('button', { name: '仅看待核实记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
+    await page.evaluate(() => dashboard.log('已确认任务完成：测验一', 'success', { key: 'run-1:quiz-1' }));
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 0);
+    await page.getByRole('button', { name: '仅看完成记录' }).click();
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
+    assert.equal(await page.locator('.yixue-log-line').count(), 1);
+});
+
 test('course events update chapter rings and summary after submitted quizzes are confirmed', async t => {
     const page = await fixture(t, 1440);
     const summary = await page.evaluate(async () => {
@@ -89,6 +101,7 @@ test('course events update chapter rings and summary after submitted quizzes are
             },
             transport: { request: async details => {
                 const url = new URL(details.url);
+                if (url.pathname.endsWith('/tests/data')) return { status: 200, responseText: JSON.stringify({ data: { results: [] } }) };
                 const responseText = url.pathname === '/mycourse/studentstudycourselist'
                     ? ['1', '2', '3'].map(id => '<div id="cur' + id + '"><span class="posCatalog_name">课程 ' + id + '</span><span class="jobUnfinishCount">' + (id === '1' ? 0 : 1) + '</span></div>').join('')
                     : url.searchParams.get('num') === '0' ? '<script>mArg=' + JSON.stringify({ defaults: {}, attachments: [task(url.searchParams.get('knowledgeid'))] }) + ';</script>' : '<script>mArg=$mArg;</script>';

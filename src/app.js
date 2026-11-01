@@ -193,11 +193,13 @@ async function bootstrap({ restored = false } = {}) {
     if (route === 'dashboard') {
         if (!access.hasAccess() && !await ui.requestCourseAccess()) return;
         guard.assertAllowed();
-        let surface, running = false;
+        let surface, running = false, lastRunner = null, lastController = null;
+        lifetime.add(() => lastController?.abort());
         const run = async ({ challenge, signal }) => {
             guard.assertAllowed();
             if (running) return;
             running = true;
+            lastController?.abort(); lastRunner = null; lastController = null;
             surface.setRemaining(null);
             surface.setProgress(0);
             surface.setSummary({});
@@ -228,7 +230,8 @@ async function bootstrap({ restored = false } = {}) {
                 surface.log('开始查询任务');
                 const emit = event => {
                     if (controller.signal.aborted) return;
-                    if (event.type === 'log') surface.log(event.message, event.tone);
+                    if (event.type === 'log') surface.log(event.message, event.tone, { key: event.key });
+                    if (event.type === 'phase') surface.setPhase(event.phase);
                     if (event.type === 'progress') surface.setProgress(event.percent);
                     if (event.type === 'remaining') surface.setRemaining(event.seconds);
                     if (event.type === 'counts') surface.setCounts(event);
@@ -239,9 +242,14 @@ async function bootstrap({ restored = false } = {}) {
                     openPage: openChapterQuestions,
                     run: (page, options) => createQuestionWorkflow({ bank, settings, transport, unsafeWindow: page.defaultView || unsafeWindow, onLog: (message, tone) => surface.log(message, tone), onCollect: collection.send }).run(page, options),
                 };
-                await activity.runExclusive(() => createCourseRunner({ context, transport, settings, bank, questions, emit, prepareVideoSession: course => prepareVideoSession(document, course) }).run({ challenge, signal: controller.signal }));
+                await activity.runExclusive(async () => {
+                    const runner = createCourseRunner({ context, transport, settings, bank, questions, emit, prepareVideoSession: course => prepareVideoSession(document, course) });
+                    const summary = await runner.run({ challenge, signal: controller.signal });
+                    lastRunner = runner; lastController = controller;
+                    if (summary?.pending) await runner.watch?.();
+                });
             } catch (error) {
-                if (controller.signal.aborted || error.name === 'AbortError') surface.log('任务已停止，可重新开始。');
+                if (controller.signal.aborted || error.name === 'AbortError') { lastRunner = null; surface.log('任务已停止，可重新开始。'); }
                 else surface.log('任务运行失败：' + error.message + '。处理后可点击启动重试。', 'danger');
             } finally {
                 scope.dispose();
@@ -250,7 +258,15 @@ async function bootstrap({ restored = false } = {}) {
                 if (activeController === controller) activeController = null;
             }
         };
-        surface = ui.showDashboard({ courseName: context.courseName, onRun: run, onConnect: () => ui.requestApiToken() });
+        surface = ui.showDashboard({ courseName: context.courseName, onRun: run, onConnect: () => ui.requestApiToken(), onRefreshProgress: async () => {
+            guard.assertAllowed();
+            if (running) return;
+            if (!lastRunner?.refresh) { surface.log('请先运行课程任务，再刷新本轮进度。'); return; }
+            const controller = lastController;
+            activeController = controller;
+            try { await lastRunner.refresh(); surface.log('已重新核验本轮课程进度。'); }
+            finally { if (activeController === controller) activeController = null; }
+        } });
         const installedVersion = typeof GM_info === 'object' ? GM_info?.script?.version : '';
         surface.log('脚本初始化成功（版本 ' + (installedVersion || '未知') + '），点击启动按钮开始刷课。' + support, 'info');
         if (!bank.getToken()) surface.log('本地随机 Token 未连接题库，视频、文档可先使用；章节答题将跳过，请填写题库 Token 后再启用。', 'warning');
@@ -267,6 +283,11 @@ async function bootstrap({ restored = false } = {}) {
             const controller = new AbortController(); activeController = controller;
             const workflow = createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog: panel.log, waitIfPaused: panel.waitIfPaused, onCollect: collection.send });
             try {
+                if (route === 'exam' && !zhihuishu) {
+                    state.textContent = '正在检查整卷预览入口…';
+                    const view = await require('./platform/exam-preview').prepareExamPreview(document, { signal: controller.signal, log: panel.log });
+                    if (view.mode === 'unavailable') { state.textContent = '请先确认整卷预览已打开，再查询参考答案。'; return; }
+                }
                 const result = route === 'exam'
                     ? await require('./questions/navigation').runQuestionPages(workflow, document, { signal: controller.signal, waitIfPaused: panel.waitIfPaused, onPage: pageResult => panel.setSummary(pageResult) })
                     : await workflow.run(document, { signal: controller.signal });

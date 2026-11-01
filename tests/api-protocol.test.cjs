@@ -7,6 +7,7 @@ const balance = { points: 100, member: true, member_until: 1900000000, daily_lim
 const ai = { enabled: true, allowed: true, ready: true, effective_model: 'glm-5.2', price_points: 5, disabled_reason: 'none' };
 const query = { title: '测试问题', options: ['甲', '乙'], type: 'single' };
 const answer = { code: 'OK', protocol_version: '1', data: [{ answer: '甲', analysis: '说明', answer_format: 'text' }], cost: 1, bucket: 'points', record_id: 123, source: 'upstream', is_ai: false, saved: true, ai_requested: false, ai_attempted: false, ai_skip_reason: 'not_requested', failure_reason: 'none' };
+const bareToken = 'Aa0_-'.repeat(8) + 'Zx9';
 function fixture(responses = []) {
     let time = 10000;
     const values = new Map([['shenchanranToken', token]]), requests = [];
@@ -20,6 +21,48 @@ function fixture(responses = []) {
     } });
     return { bank, values, requests, responses, advance(ms) { time += ms; } };
 }
+
+test('prefix-free API tokens round-trip without changing existing credentials or accepting collection keys', async () => {
+    const f = fixture();
+    assert.equal(bareToken.length, 43);
+    for (const credential of [bareToken, token, 'tk_' + 'b'.repeat(43)]) {
+        assert.equal(f.bank.isValidToken(credential), true);
+        f.bank.setToken(credential); assert.equal(f.bank.getToken(), credential);
+        assert.equal((await f.bank.search(query)).code, 1);
+        assert.equal(f.requests.at(-1).headers.Authorization, 'Bearer ' + credential);
+    }
+    for (const credential of ['a'.repeat(31), 'sub_' + 'a'.repeat(43), 'Bearer ' + bareToken, bareToken + '\n', ' ' + bareToken, '<'.repeat(43)]) assert.equal(f.bank.isValidToken(credential), false);
+});
+
+test('official authenticated requests declare the script and release version while keeping API v1 routes', async () => {
+    const f = fixture([{ body: { code: 'OK', cost: 0, data: balance } }, { body: { code: 'OK', cost: 0, protocol_version: '1', data: { ai } } }, { body: answer }]);
+    f.bank.setToken(bareToken);
+    await f.bank.refreshBalance(); await f.bank.refreshCapabilities(); await f.bank.search(query);
+    assert.deepEqual(f.requests.map(request => new URL(request.url).pathname), ['/api/v1/balance', '/api/v1/capabilities', '/api/v1/search']);
+    for (const request of f.requests) {
+        assert.equal(request.headers['X-Yisou-Client'], 'yisou-script');
+        assert.equal(request.headers['X-Yisou-Client-Version'], require('../src/metadata.json').version);
+        assert.equal(request.headers.Authorization, 'Bearer ' + bareToken);
+        assert.equal(Object.keys(request.headers).some(name => /device|fingerprint|install/i.test(name)), false);
+    }
+    assert.deepEqual(JSON.parse(f.requests.at(-1).data), { ...query, use_ai: false });
+});
+
+test('custom API origins do not receive official-source attribution headers', async () => {
+    const f = fixture(); f.bank.setBase('https://custom.example'); f.bank.setToken(token);
+    await f.bank.search(query);
+    assert.equal(f.requests[0].headers['X-Yisou-Client'], undefined);
+    assert.equal(f.requests[0].headers['X-Yisou-Client-Version'], undefined);
+});
+
+test('prefix-free credentials echoed in request diagnostics never enter logs or metadata', async () => {
+    const f = fixture([{ body: { ...answer, idempotency_key: bareToken }, headers: 'X-Request-ID: debug-' + bareToken }]);
+    f.bank.setToken(bareToken);
+    const result = await f.bank.search(query);
+    assert.equal(result.code, 1);
+    assert.equal(JSON.stringify(result.metadata).includes(bareToken), false);
+    assert.equal(result.metadata.idempotency_key, undefined);
+});
 for (const url of ['http://public.example', 'https://u:p@example.com', 'https://example.com/path', 'https://example.com/?token=secret', 'javascript:alert(1)']) test(`rejects unsafe API root ${url.split('?')[0]}`, () => {
     const f = fixture(); assert.throws(() => f.bank.setBase(url)); assert.equal(f.bank.getToken(), token);
 });

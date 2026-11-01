@@ -8,7 +8,7 @@ const quiz = (id = '1', patch = {}) => ({ type: 'workid', job: true, jobid: 'wor
 const video = { type: 'video', job: true, jobid: 'video-2', property: { objectid: 'object', name: '后续视频', doublespeed: 1 } };
 function fixture(options = {}) {
     const chapters = options.chapters || [{ id: '1', tasks: [quiz()] }];
-    const state = { now: 1000, requests: [], events: [], waits: [], submitted: 0, saved: 0, answered: 0, catalogReads: 0, freshReads: 0, controller: new AbortController() };
+    const state = { now: 1000, requests: [], events: [], waits: [], submitted: 0, saved: 0, answered: 0, catalogReads: 0, freshReads: 0, statisticsReads: 0, controller: new AbortController() };
     const settings = { get: (key, fallback) => ({ doRenwu: false, doNoMission: false, autoSubmit: true, vgqtlv: 80, beisu: 1, ...options.settings })[key] ?? fallback };
     const runner = createCourseRunner({ context: { origin, courseId: '101', classId: '202', uid: '404' }, settings,
         bank: { getToken: () => 'test' }, emit: event => state.events.push(event), now: () => state.now,
@@ -41,12 +41,16 @@ function fixture(options = {}) {
             else if (url.pathname.startsWith('/multimedia/log/')) {
                 await options.onVideoReport?.(url, state);
                 responseText = JSON.stringify({ isPassed: url.searchParams.get('isdrag') === '4' });
-            } else if (url.pathname.includes('/tests/data')) responseText = JSON.stringify({ data: { results: [] } });
+            } else if (url.pathname.includes('/tests/data')) {
+                state.statisticsReads++;
+                if (options.statisticsError) throw options.statisticsError;
+                responseText = JSON.stringify({ data: { results: options.statistics?.(state, url) || [] } });
+            }
             else responseText = '';
             return { status: 200, responseText };
         } },
     });
-    return { state, run: () => runner.run({ signal: state.controller.signal }) };
+    return { state, runner, run: () => runner.run({ signal: state.controller.signal }) };
 }
 const last = (state, type) => state.events.filter(event => event.type === type).at(-1);
 
@@ -102,7 +106,7 @@ test('HTTP success without completion evidence stays pending and never resubmits
     assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 1); assert.equal(f.state.submitted, 1);
     assert.ok(f.state.catalogReads >= 3 && f.state.catalogReads <= 6);
-    assert.ok(f.state.requests.length < 20);
+    assert.ok(f.state.requests.length < 35);
     const waiting = f.state.events.find(event => event.type === 'log' && /等待平台|正在核验/.test(event.message));
     assert.equal(waiting?.tone, 'pending');
 });
@@ -200,4 +204,91 @@ test('platform task confirmation accepts the legacy work ID field without guessi
     });
     const summary = await f.run();
     assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+});
+
+for (const statusStr of ['已完成', '待批阅', '已提交', '已批阅']) test('submitted quiz statistics confirm completion when the task card and chapter counter stay stale: ' + statusStr, async () => {
+    const f = fixture({ statistics: state => state.submitted ? [{ workId: '1', chapterId: '1', statusStr }] : [] });
+    const summary = await f.run();
+    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
+});
+
+test('previously submitted quizzes are recognized before opening or querying them again', async () => {
+    const f = fixture({ statistics: () => [{ workId: 'work-1', chapterId: '1', statusStr: '待批阅' }] });
+    const summary = await f.run();
+    assert.equal(summary.confirmed, 1); assert.equal(f.state.answered, 0); assert.equal(f.state.submitted, 0);
+});
+
+for (const record of [
+    { workId: '1', chapterId: '1', statusStr: '已保存' },
+    { workId: '1', chapterId: '1', statusStr: '未提交' },
+    { workId: '1', chapterId: '1', statusStr: '待重做' },
+    { workId: '2', chapterId: '1', statusStr: '已完成' },
+    { workId: '1', chapterId: '2', statusStr: '已完成' },
+    { workId: '1', chapterId: '1', courseId: '999', statusStr: '已完成' },
+]) test('drafts, incomplete states and records from another quiz cannot confirm completion: ' + JSON.stringify(record), async () => {
+    const f = fixture({ statistics: () => [record] }); const summary = await f.run();
+    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+});
+
+test('task state still confirms completion when statistics are unavailable', async () => {
+    const f = fixture({ statisticsError: new Error('offline'), freshTasks: () => [quiz('1', { isPassed: 'true' })] });
+    const summary = await f.run();
+    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+});
+
+test('read-only refresh after traversal updates chapter counts and resolves the original pending log', async () => {
+    const f = fixture({ statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '待批阅' }] : [] });
+    assert.equal((await f.run()).pending, 1);
+    const original = f.state.events.find(event => event.type === 'log' && /章节测验已请求提交/.test(event.message));
+    f.state.completedLater = true;
+    const summary = await f.runner.refresh();
+    assert.equal(summary.pending, 0); assert.equal(summary.confirmed, 1);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
+    const completion = f.state.events.find(event => event.type === 'log' && event.tone === 'success' && event.key === original.key);
+    assert.ok(original.key); assert.ok(completion);
+});
+
+test('post-traversal monitoring catches a later platform confirmation without executing a quiz again', async () => {
+    const f = fixture({ statistics: state => state.monitorWaited ? [{ workId: '1', chapterId: '1', statusStr: '已完成' }] : [],
+        onWait: (milliseconds, state) => { if (milliseconds === 15000) state.monitorWaited = true; },
+    });
+    await f.run();
+    assert.equal((await f.runner.watch({ intervalMs: 15000, maxAttempts: 3 })).pending, 0);
+    assert.equal(f.state.answered, 1); assert.equal(f.state.submitted, 1);
+});
+
+test('post-traversal monitoring is bounded and remains cancellable', async () => {
+    const f = fixture(); await f.run();
+    assert.equal((await f.runner.watch({ intervalMs: 15000, maxAttempts: 2 })).pending, 1);
+    assert.equal(f.state.waits.filter(ms => ms === 15000).length, 2);
+    f.state.controller.abort();
+    const requests = f.state.requests.length;
+    await assert.rejects(f.runner.refresh(), { name: 'AbortError' });
+    assert.equal(f.state.requests.length, requests);
+});
+
+test('a failing catalog refresh cannot block valid completion evidence from quiz statistics', async () => {
+    const f = fixture({ catalogError: new Error('offline'), statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '已完成' }] : [] });
+    await f.run(); f.state.completedLater = true;
+    assert.equal((await f.runner.refresh()).pending, 0);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0);
+});
+
+test('chapter-only statistics can confirm a uniquely identified quiz after the whole chapter was scanned', async () => {
+    const f = fixture({ statistics: state => state.submitted ? [{ chapterId: '1', statusStr: '待批阅' }] : [] });
+    const summary = await f.run();
+    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0);
+});
+
+test('chapter-only statistics never guess between multiple quizzes in one chapter', async () => {
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1'), quiz('2')] }], statistics: () => [{ chapterId: '1', statusStr: '已完成' }] });
+    const summary = await f.run();
+    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 2);
+});
+
+test('conflicting status records for the same quiz remain pending', async () => {
+    const f = fixture({ statistics: () => [{ workId: '1', chapterId: '1', statusStr: '已完成' }, { workId: '1', chapterId: '1', statusStr: '未提交' }] });
+    assert.equal((await f.run()).pending, 1);
 });

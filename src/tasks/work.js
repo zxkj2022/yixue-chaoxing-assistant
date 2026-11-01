@@ -22,6 +22,10 @@ function invokeHost(host, method, signal) {
 }
 
 async function runWork(task, env) {
+    if (await env.verifyCompletion?.({ before: true })) {
+        env.log('章节测验已确认完成：' + env.name, 'success', 'status');
+        return 'confirmed';
+    }
     if (!env.bank || typeof env.bank.getToken !== 'function' || !env.bank.getToken()) {
         env.log('未连接题库，跳过章节测验：' + env.name, 'warning');
         return 'skipped';
@@ -41,10 +45,10 @@ async function runWork(task, env) {
     if (result.review) {
         if (await env.verifyCompletion?.()) {
             page.release?.();
-            env.log('章节测验已确认完成：' + env.name, 'success');
+            env.log('章节测验已确认完成：' + env.name, 'success', 'status');
             return 'confirmed';
         }
-        env.log('章节测验已处于批阅页面，等待平台确认任务状态：' + env.name, 'pending');
+        env.log('章节测验已处于批阅页面，等待平台确认任务状态：' + env.name, 'pending', 'status');
         return 'pending';
     }
     if (result.stopped) {
@@ -80,12 +84,12 @@ async function runWork(task, env) {
     }
     if (await env.verifyCompletion?.()) {
         if (!requestCompleted) page.release?.();
-        env.log('章节测验已确认完成：' + env.name, 'success');
+        env.log('章节测验已确认完成：' + env.name, 'success', 'status');
         return 'confirmed';
     }
     if (!requestCompleted && typeof page.retain === 'function') env.log('未确认章节保存请求已完成，已保留测验页面，请人工核对：' + env.name, 'warning');
     env.log(canSubmit ? '章节测验已请求提交，等待平台确认任务状态：' + env.name
-        : '章节测验参考答案已填写，尚未提交，请人工核对：' + env.name, canSubmit ? 'pending' : 'warning');
+        : '章节测验参考答案已填写，尚未提交，请人工核对：' + env.name, canSubmit ? 'pending' : 'warning', 'status');
     return 'pending';
 }
 

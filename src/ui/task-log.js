@@ -8,6 +8,7 @@ function createTaskLog(document) {
     const follow = element(document, 'input', { type: 'checkbox', checked: true, 'aria-label': '跟随最新日志' });
     const filters = element(document, 'div', { className: 'yixue-log-filters', 'aria-label': '筛选日志' });
     let active = 'all', shown = 0;
+    const keyed = new Map(), keys = new WeakMap();
     const matches = line => active === 'all' || (active === 'issues' ? ['error', 'warning'].includes(line.dataset.tone) : line.dataset.tone === active);
     const updateCount = () => {
         const total = log.childElementCount;
@@ -31,22 +32,37 @@ function createTaskLog(document) {
     }
     const toolbar = element(document, 'div', { className: 'yixue-log-toolbar' }, [filters,
         element(document, 'label', { className: 'yixue-log-follow' }, [follow, '跟随最新']),
-        button(document, '清空', () => { log.replaceChildren(); render(); }, { className: 'yixue-log-clear', 'aria-label': '清空日志' }),
+        button(document, '清空', () => { log.replaceChildren(); keyed.clear(); render(); }, { className: 'yixue-log-clear', 'aria-label': '清空日志' }),
     ]);
     return {
         log, toolbar, empty, count,
-        append(message, tone = 'info') {
+        append(message, tone = 'info', { key = '' } = {}) {
             const level = ['error', 'danger'].includes(tone) ? 'error' : ['warning', 'warn'].includes(tone) ? 'warning' : ['success', 'skipped', 'pending'].includes(tone) ? tone : 'info';
             const labels = { error: '异常', warning: '提示', pending: '核验', success: '完成', skipped: '跳过', info: '记录' };
             const now = new Date();
-            const line = element(document, 'div', { className: 'yixue-log-line', 'data-tone': level }, [
+            const existing = key && keyed.get(key);
+            let line = existing?.parentNode === log ? existing : null;
+            if (line) {
+                if (!line.hidden) shown--;
+                line.dataset.tone = level;
+                line.querySelector('.yixue-log-badge').textContent = labels[level];
+                line.querySelector('.yixue-log-message').textContent = logText(message);
+            } else {
+                line = element(document, 'div', { className: 'yixue-log-line', 'data-tone': level }, [
                 element(document, 'time', { dateTime: now.toISOString(), text: now.toLocaleTimeString('zh-CN', { hour12: false }) }),
                 element(document, 'span', { className: 'yixue-log-badge', text: labels[level] }),
                 element(document, 'span', { className: 'yixue-log-message', text: logText(message) }),
-            ]);
-            log.append(line);
+                ]);
+                log.append(line);
+                if (key) { keyed.set(key, line); keys.set(line, key); }
+            }
             line.hidden = !matches(line); if (!line.hidden) shown++;
-            while (log.childElementCount > 500) { if (!log.firstElementChild.hidden) shown--; log.firstElementChild.remove(); }
+            while (log.childElementCount > 500) {
+                const oldest = log.firstElementChild;
+                if (!oldest.hidden) shown--;
+                if (keys.has(oldest)) keyed.delete(keys.get(oldest));
+                oldest.remove();
+            }
             updateCount();
             if (follow.checked) log.scrollTop = log.scrollHeight;
         },

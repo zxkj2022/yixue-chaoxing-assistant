@@ -10,7 +10,7 @@ function createAccountView({ document, bank, prefix, onConnect, onSave, getDispl
     const tokenInput = element(document, 'input', {
         id: `${prefix}-token`, type: 'password', value: getDisplayToken(), autocomplete: 'off', spellcheck: false,
         'aria-label': '当前 Token', className: dashboard ? 'form-control' : '',
-        placeholder: 'ys_…',
+        placeholder: '粘贴完整 Token',
     });
     let renderedToken = getDisplayToken();
     const error = element(document, 'p', { className: 'yx-error', role: 'status' });
@@ -77,3 +77,4 @@ function createAccountView({ document, bank, prefix, onConnect, onSave, getDispl
 }
 
 module.exports = createAccountView;
+

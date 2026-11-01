@@ -1,5 +1,6 @@
 'use strict';
 const { abortError } = require('./primitives');
+const { version: clientVersion } = require('../metadata.json');
 // Standalone transport: the page code below consumes a normalized answer string.
 function createQuestionBankClient({ request, getValue, setValue, toText = value => String(value ?? ''), now = () => Date.now() }) {
     const defaultBase = 'https://api.sanzwk.com';
@@ -38,7 +39,8 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         try { return canonicalBase(validBase(getValue('yixueQuestionBankBase', defaultBase))); }
         catch (_) { return defaultBase; }
     };
-    const isValidToken = value => typeof value === 'string' && value === value.trim() && /^(?:ys|tk)_[A-Za-z0-9_-]{32,128}$/.test(value);
+    const isValidToken = value => typeof value === 'string' && value === value.trim() && !value.startsWith('sub_')
+        && /^(?:(?:ys|tk)_[A-Za-z0-9_-]{32,128}|[A-Za-z0-9_-]{43})$/.test(value);
     const getToken = () => {
         const token = getValue(tokenKey, '');
         const origin = getValue('yixueApiTokenOrigin', defaultBase);
@@ -51,7 +53,7 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         for (const key of ['yixueSubmissionOwner', 'yixueSubmissionHistory', 'yixueSubmissionRetry', 'yixueSubmissionProvision', 'yixueSubmissionNext']) setValue(key, null);
     };
     const setToken = value => {
-        if (!isValidToken(value)) throw new Error('请填写题库「接口接入」生成的 ys_ 开头 API Token，也兼容已有 tk_ Token。');
+        if (!isValidToken(value)) throw new Error('请完整复制题库「脚本接入」中的 Token；支持新版无前缀 Token，也兼容已有 ys_、tk_ Token。');
         if (value !== getToken()) {
             setValue(pendingKey, {});
             setValue('yixueTokenRevision', uuid());
@@ -109,6 +111,10 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         const headers = { Accept: 'application/json', 'X-Request-ID': requestId };
         if (body !== undefined) headers['Content-Type'] = 'application/json';
         if (token) headers.Authorization = 'Bearer ' + token;
+        if (token && [defaultBase, legacyBase].includes(origin)) {
+            headers['X-Yisou-Client'] = 'yisou-script';
+            headers['X-Yisou-Client-Version'] = clientVersion;
+        }
         if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
         try {
             handle = request({
@@ -119,7 +125,7 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
                     try {
                         if (response.finalUrl && new URL(response.finalUrl).origin !== origin) return finish({ status: 0, reason: 'redirect' });
                         const ids = typeof response.responseHeaders === 'string' ? response.responseHeaders.split(/\r?\n/).filter(line => /^x-request-id:/i.test(line)).map(line => line.slice(line.indexOf(':') + 1).trim()) : [];
-                        if (ids.length === 1 && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(ids[0]) && !/^(?:ys_|tk_|sub_)/.test(ids[0])) responseId = ids[0];
+                        if (ids.length === 1 && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(ids[0]) && !/^(?:ys_|tk_|sub_)/.test(ids[0]) && !(token && ids[0].includes(token))) responseId = ids[0];
                         const payload = JSON.parse(response.responseText);
                         finish({ status: response.status, body: payload && typeof payload === 'object' ? payload : {}, request_id: responseId });
                     } catch (_) { finish({ status: response.status || 0, reason: 'format', request_id: responseId }); }
@@ -181,7 +187,7 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         for (const key of ['ai_requested', 'ai_attempted']) if (typeof body[key] === 'boolean') metadata[key] = body[key];
         if (Object.hasOwn(aiReasons, body.ai_skip_reason)) metadata.ai_skip_reason = body.ai_skip_reason;
         if (['none', 'source_unavailable', 'no_answer', 'no_authorized_source', 'sources_unconfigured', 'interrupted'].includes(body.failure_reason)) metadata.failure_reason = body.failure_reason;
-        if (typeof body.idempotency_key === 'string' && /^[A-Za-z0-9_-]{16,100}$/.test(body.idempotency_key) && !/^(?:ys_|tk_|sub_)/.test(body.idempotency_key)) metadata.idempotency_key = body.idempotency_key;
+        if (typeof body.idempotency_key === 'string' && /^[A-Za-z0-9_-]{16,100}$/.test(body.idempotency_key) && !/^(?:ys_|tk_|sub_)/.test(body.idempotency_key) && !(getToken() && body.idempotency_key.includes(getToken()))) metadata.idempotency_key = body.idempotency_key;
         return metadata;
     };
     const supportLabel = metadata => '（' + [metadata.record_id ? '查询记录：' + metadata.record_id : '', metadata.request_id ? '请求编号：' + metadata.request_id : ''].filter(Boolean).join('；') + '）';
@@ -361,3 +367,4 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
 }
 
 module.exports = createQuestionBankClient;
+

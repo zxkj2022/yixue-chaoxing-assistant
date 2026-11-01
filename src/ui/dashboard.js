@@ -10,7 +10,7 @@ const createScreenAwake = require('../core/screen-awake');
 const createProductInfo = require('./product-info');
 const product = require('../core/product');
 
-function createDashboard(context, { courseName = '课程任务', onRun, onConnect }) {
+function createDashboard(context, { courseName = '课程任务', onRun, onConnect, onRefreshProgress }) {
     const { document, window, root, bank, settings, access, logoUrl, modal, saveToken, connect } = context;
     const main = element(document, 'main', { id: 'yixue-course-dashboard', className: 'yixue-dashboard' });
     const container = element(document, 'div', { className: 'container-fluid' });
@@ -79,7 +79,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
             element(document, 'small', { text: '仅前台运行时生效，切后台或锁屏仍可能暂停。' }), awakeStatus,
         ])]),
     ]);
-    let running = false, runController = null, runTimer = null;
+    let running = false, runController = null, runTimer = null, phase = '';
     async function run(challenge) {
         if (running) { screenAwake.update({ running: false }); runController?.abort(abortError()); return; }
         const controller = new AbortController();
@@ -96,16 +96,18 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     const challenge = button(document, '挑战模式', () => run(true), { id: 'yixue-run-challenge', className: 'btn btn-outline-primary' });
     function setRunning(value, options = {}) {
         running = Boolean(value);
+        phase = '';
         screenAwake.update({ running });
         start.disabled = false;
         challenge.disabled = running;
+        refreshProgress.disabled = running;
         start.textContent = running ? '停止运行' : '开始运行';
         start.setAttribute('aria-label', start.textContent);
         main.dataset.running = String(running);
         clearInterval(runTimer); runTimer = null;
         if (running) {
             const startedAt = Date.now();
-            runTimer = setInterval(() => { runState.textContent = '运行中 · ' + Math.floor((Date.now() - startedAt) / 1000) + '秒'; }, 1000);
+            runTimer = setInterval(() => { runState.textContent = (phase === 'verifying' ? '核验中' : '运行中') + ' · ' + Math.floor((Date.now() - startedAt) / 1000) + '秒'; }, 1000);
         }
         runState.textContent = running ? '运行中' : '本轮已结束';
         if (!running && taskStatus.dataset.status === 'running') {
@@ -156,7 +158,13 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     controls.append(tasks.element, config.element);
     const progressCard = card('任务进度');
     progressCard.element.classList.add('yixue-overview');
-    progressCard.body.querySelector('.yixue-card-heading').append(runState);
+    const refreshProgress = button(document, '刷新进度', async () => {
+        refreshProgress.disabled = true;
+        try { await onRefreshProgress?.(); }
+        catch (error) { activityLog.append(error?.name === 'AbortError' ? '进度核验已停止。' : '进度暂时无法刷新，请稍后重试。', error?.name === 'AbortError' ? 'info' : 'warning'); }
+        finally { if (!destroyed) refreshProgress.disabled = running; }
+    }, { id: 'yixue-refresh-progress', className: 'yx-refresh', 'aria-label': '刷新课程进度（不重新执行任务）' });
+    progressCard.body.querySelector('.yixue-card-heading').append(refreshProgress, runState);
     const total = element(document, 'span', { id: 'yixue-total-count', className: 'yixue-stat-value', text: '0' });
     const unconfirmed = element(document, 'span', { id: 'yixue-unconfirmed-count', className: 'yixue-stat-value accent', text: '0' });
     const completed = element(document, 'span', { id: 'yixue-completed-count', className: 'yixue-stat-value', text: '0' });
@@ -208,6 +216,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     return {
         element: main,
         log: activityLog.append,
+        setPhase(value) { phase = value; if (running) runState.textContent = phase === 'verifying' ? '核验中' : '运行中'; },
         setTask({ name, chapter, status }) {
             taskName.textContent = name;
             taskName.title = name;
@@ -250,3 +259,4 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
 }
 
 module.exports = createDashboard;
+
