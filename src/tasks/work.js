@@ -1,5 +1,6 @@
 'use strict';
 const { observeHostActions } = require('../platform/host-actions');
+const { isReviewPath } = require('../questions/collection-answer');
 const { abortError } = require('../core/primitives');
 
 function invokeHost(host, method, signal) {
@@ -43,17 +44,17 @@ async function runWork(task, env) {
     if (result.answered) page.retain?.();
     if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
     if (result.review) {
-        if (await env.verifyCompletion?.()) {
+        if (isReviewPath(page.document?.URL) || await env.verifyCompletion?.()) {
             page.release?.();
             env.log('章节测验已确认完成：' + env.name, 'success', 'status');
             return 'confirmed';
         }
-        env.log('章节测验已处于批阅页面，等待平台确认任务状态：' + env.name, 'pending', 'status');
-        return 'pending';
+        env.log('章节测验已处于批阅页面，请在学习通查看任务状态：' + env.name, 'warning', 'status');
+        return 'skipped';
     }
     if (result.stopped) {
         env.log('章节查询已停止，本次不自动保存或提交，请人工核对：' + env.name, 'warning');
-        return result.answered ? 'pending' : 'skipped';
+        return 'skipped';
     }
     if (!result.total || !result.answered) {
         if (result.total && result.matched > 0) {
@@ -79,7 +80,13 @@ async function runWork(task, env) {
             const state = await observation.result;
             if (env.signal?.aborted) throw env.signal.reason || new Error('章节测验已取消');
             requestCompleted = state.completed;
-            if (requestCompleted) page.release?.();
+            if (requestCompleted) {
+                page.release?.();
+                if (canSubmit) {
+                    env.log('章节测验提交成功：' + env.name, 'success', 'status');
+                    return 'confirmed';
+                }
+            }
         } finally { observation.dispose(); }
     }
     if (await env.verifyCompletion?.()) {
@@ -87,10 +94,10 @@ async function runWork(task, env) {
         env.log('章节测验已确认完成：' + env.name, 'success', 'status');
         return 'confirmed';
     }
+    if (canSubmit) throw new Error('章节测验提交未成功或未收到有效响应，已保留测验页面，请人工核对。');
     if (!requestCompleted && typeof page.retain === 'function') env.log('未确认章节保存请求已完成，已保留测验页面，请人工核对：' + env.name, 'warning');
-    env.log(canSubmit ? '章节测验已请求提交，等待平台确认任务状态：' + env.name
-        : '章节测验参考答案已填写，尚未提交，请人工核对：' + env.name, canSubmit ? 'pending' : 'warning', 'status');
-    return 'pending';
+    env.log('章节测验参考答案已填写，尚未提交，请人工核对：' + env.name, 'warning', 'status');
+    return 'skipped';
 }
 
 module.exports = { runWork };

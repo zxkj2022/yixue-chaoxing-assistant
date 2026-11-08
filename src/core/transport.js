@@ -96,5 +96,5 @@ function createTransport({ base, send, createXhr = () => new XMLHttpRequest(), p
         });
     } };
 }
-module.exports = { createTransport, createHttpError };
+module.exports = { createTransport, createHttpError, isLoginResponse };
 

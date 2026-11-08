@@ -20,7 +20,12 @@
 .yx-course-sheet .yx-balance-line { display:flex; align-items:center; position:relative; }
 .yx-course-sheet .yx-balance-line input { padding-right:84px; }
 .yx-course-sheet .yx-balance-line .yx-refresh { position:absolute; right:12px; }
-.yx-course-sheet .yx-account-connect { margin-top:10px; }
+.yx-token-guide { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin-top:12px; color:#65748a; font-size:12px; }
+.yx-token-guide p { flex:1 1 175px; margin:0; }
+.yx-token-guide .yx-refresh { min-height:32px; font-weight:600; }
+.yx-token-ai { margin-top:12px; padding-top:10px; border-top:1px solid #e5eaf2; }
+.yx-course-sheet .yx-token-ai input[type="checkbox"] { flex:0 0 16px; width:16px; height:16px; padding:0; margin:2px 0 0; accent-color:#007aff; }
+.yx-notice-warning { margin:0 0 16px; padding:10px 12px; border:1px solid #efdcb6; border-radius:10px; background:#fff8e9; color:#795521; font-size:13px; line-height:1.65; }
 .yx-course-sheet .yx-error:empty { display:none; }
 .yx-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:10px 15px; flex-shrink:0; border:1px solid #e0ebfc; border-radius:11px; color:#006fe8; background:#edf4ff; text-decoration:none; white-space:nowrap; font:inherit; font-size:13px; font-weight:550; cursor:pointer; transition:background .15s,transform .15s; }
 .yx-button:hover { background:#e2edff; }

@@ -10,6 +10,14 @@ const createScreenAwake = require('../core/screen-awake');
 const createProductInfo = require('./product-info');
 const product = require('../core/product');
 
+function formatRuntime(seconds) {
+    if (seconds < 60) return seconds + '秒';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + '分';
+    const remainder = minutes % 60;
+    return Math.floor(minutes / 60) + '小时' + (remainder ? remainder + '分' : '');
+}
+
 function createDashboard(context, { courseName = '课程任务', onRun, onConnect, onRefreshProgress }) {
     const { document, window, root, bank, settings, access, logoUrl, modal, saveToken, connect } = context;
     const main = element(document, 'main', { id: 'yixue-course-dashboard', className: 'yixue-dashboard' });
@@ -37,7 +45,6 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     tasks.element.classList.add('yixue-task-card');
     const taskGrid = element(document, 'div', { className: 'yixue-task-grid' });
     const toggleNodes = new Map();
-    const optionNodes = new Map();
     const toggleDefinitions = [
         ['doVideo', '视频任务', true], ['doDocument', '文档任务', true], ['doWork', '章节测验', true],
         ['doLive', '直播任务', true], ['doRenwu', '任务引擎', false], ['doNoMission', '非任务点', false],
@@ -50,8 +57,10 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
             node.classList.toggle('btn-primary', enabled);
             node.classList.toggle('btn-light', !enabled);
         }
-        for (const [key, input] of optionNodes) input.checked = settings.get(key, key === 'autoSubmit' || key === 'keepAwake') === true;
-        screenAwake.update({ enabled: settings.get('keepAwake', true) === true });
+        autoSubmit.checked = settings.get('autoSubmit', true) === true;
+        keepAwake.checked = settings.get('keepAwake', true) === true;
+        account.render();
+        screenAwake.update({ enabled: keepAwake.checked });
     }
     for (const [key, label] of toggleDefinitions) {
         const toggle = button(document, '', () => {
@@ -72,16 +81,33 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     } });
     const keepAwake = element(document, 'input', { id: 'yixue-option-keepAwake', type: 'checkbox', checked: settings.get('keepAwake', true) === true });
     keepAwake.addEventListener('change', () => { settings.set('keepAwake', keepAwake.checked); screenAwake.update({ enabled: keepAwake.checked }); });
-    optionNodes.set('keepAwake', keepAwake);
     const awakeOption = element(document, 'div', { className: 'yixue-awake-option' }, [
         element(document, 'label', { className: 'yixue-answer-option', htmlFor: keepAwake.id }, [keepAwake, element(document, 'span', {}, [
             element(document, 'strong', { text: '运行时保持亮屏' }),
             element(document, 'small', { text: '仅前台运行时生效，切后台或锁屏仍可能暂停。' }), awakeStatus,
         ])]),
     ]);
-    let running = false, runController = null, runTimer = null, phase = '';
-    async function run(challenge) {
+    let running = false, runController = null, runTimer = null, nightNotice = null;
+    function requestRun(challenge) {
         if (running) { screenAwake.update({ running: false }); runController?.abort(abortError()); return; }
+        if (nightNotice) return;
+        const hour = new Date().getHours();
+        if (hour >= 8 && hour < 20) { void run(challenge); return; }
+        const notice = modal.open({
+            id: 'yixue-night-warning', title: '夜间运行提醒', compact: true,
+            onClose: proceed => { nightNotice = null; if (proceed === true) void run(challenge); },
+        });
+        nightNotice = notice;
+        notice.sheet.setAttribute('aria-describedby', 'yixue-night-warning-message');
+        notice.sheet.append(
+            element(document, 'p', { id: 'yixue-night-warning-message', className: 'yx-notice-warning', text: '晚上运行可能会导致学习进度清零哦，建议早上八点再开始学习。' }),
+            element(document, 'div', { className: 'yx-input-row' }, [
+                button(document, '取消', () => notice.close(), { className: 'yx-button yx-quiet' }),
+                button(document, '继续运行', () => notice.close(true), { className: 'yx-button yx-primary' }),
+            ]),
+        );
+    }
+    async function run(challenge) {
         const controller = new AbortController();
         runController = controller;
         setRunning(true);
@@ -92,11 +118,10 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
         }
         finally { if (runController === controller) { runController = null; setRunning(false); refreshSettings(); } }
     }
-    const start = button(document, '开始运行', () => run(false), { id: 'yixue-run-course', className: 'btn btn-success' });
-    const challenge = button(document, '挑战模式', () => run(true), { id: 'yixue-run-challenge', className: 'btn btn-outline-primary' });
+    const start = button(document, '开始运行', () => requestRun(false), { id: 'yixue-run-course', className: 'btn btn-success' });
+    const challenge = button(document, '挑战模式', () => requestRun(true), { id: 'yixue-run-challenge', className: 'btn btn-outline-primary' });
     function setRunning(value, options = {}) {
         running = Boolean(value);
-        phase = '';
         screenAwake.update({ running });
         start.disabled = false;
         challenge.disabled = running;
@@ -106,8 +131,12 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
         main.dataset.running = String(running);
         clearInterval(runTimer); runTimer = null;
         if (running) {
-            const startedAt = Date.now();
-            runTimer = setInterval(() => { runState.textContent = (phase === 'verifying' ? '核验中' : '运行中') + ' · ' + Math.floor((Date.now() - startedAt) / 1000) + '秒'; }, 1000);
+            const startedAt = window.performance.now();
+            runTimer = setInterval(() => {
+                const seconds = Math.floor((window.performance.now() - startedAt) / 1000);
+                const label = '运行中 · ' + formatRuntime(seconds);
+                if (runState.textContent !== label) runState.textContent = label;
+            }, 1000);
         }
         runState.textContent = running ? '运行中' : '本轮已结束';
         if (!running && taskStatus.dataset.status === 'running') {
@@ -120,7 +149,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     tasks.body.append(taskGrid, awakeOption, element(document, 'div', { className: 'yixue-run-actions' }, [start, challenge]));
     const config = card('账户与配置', '保存在当前浏览器');
     config.element.classList.add('yixue-config-card');
-    const account = createAccountView({ document, bank, prefix: 'yixue-dashboard', onConnect: onConnect || connect, onSave: saveToken, getDisplayToken: access.getDisplayToken, dashboard: true });
+    const account = createAccountView({ document, bank, settings, prefix: 'yixue-dashboard', onConnect: onConnect || connect, onSave: saveToken, getDisplayToken: access.getDisplayToken, dashboard: true });
     const fields = element(document, 'div', { className: 'yixue-config-fields' });
     function numericField(id, title, value, min, max, step, suffix) {
         const input = element(document, 'input', { id, type: 'number', value, min, max, step, required: true, className: 'form-control' });
@@ -133,26 +162,26 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     }
     const speed = numericField('yixue-video-speed', '视频倍速', settings.get('beisu', 1), .5, 16, .25, '倍');
     const threshold = numericField('yixue-answer-threshold', '最低答案匹配率', settings.get('vgqtlv', 85), 0, 100, 1, '%');
-    const answerOptions = element(document, 'div', { className: 'yixue-answer-options' });
-    for (const [key, label, description] of [
-        ['autoSubmit', '章节测验达标后提交', '按已填写题目占比判断，不代表实际得分；作业和考试请核对后自行交卷。'],
-        ['doAI', '启用 AI 参考答案', '题库查询时可使用 AI；服务权限与消耗以题库账户为准。'],
-    ]) {
-        const input = element(document, 'input', { id: `yixue-option-${key}`, type: 'checkbox', checked: settings.get(key, key === 'autoSubmit') === true });
-        input.addEventListener('change', () => settings.set(key, input.checked));
-        optionNodes.set(key, input);
-        answerOptions.append(element(document, 'label', { className: 'yixue-answer-option', htmlFor: input.id }, [input,
-            element(document, 'span', {}, [element(document, 'strong', { text: label }), element(document, 'small', { text: description })]),
-        ]));
-    }
+    const autoSubmit = element(document, 'input', { id: 'yixue-option-autoSubmit', type: 'checkbox' });
+    autoSubmit.addEventListener('change', () => settings.set('autoSubmit', autoSubmit.checked));
+    const answerOptions = element(document, 'div', { className: 'yixue-answer-options' }, [
+        element(document, 'label', { className: 'yixue-answer-option', htmlFor: autoSubmit.id }, [autoSubmit,
+            element(document, 'span', {}, [
+                element(document, 'strong', { text: '章节测验达标后提交' }),
+                element(document, 'small', { text: '提交门槛按已填写题目的占比计算。作业和考试请核对后自行交卷。' }),
+            ]),
+        ]),
+    ]);
     const saveStatus = element(document, 'span', { className: 'yixue-save-hint', role: 'status', text: '保存后应用于后续视频进度上报' });
     const saveConfig = button(document, '保存配置', () => {
         if (!speed.reportValidity() || !threshold.reportValidity()) return;
-        settings.set('beisu', Number(speed.value));
+        const savedSpeed = Number(speed.value);
+        settings.set('beisu', savedSpeed);
         settings.set('vgqtlv', Number(threshold.value));
         saveStatus.textContent = '已保存 · 倍速将在下次视频进度上报时应用';
         const notice = modal.open({ id: 'yixue-settings-saved', title: '配置已保存', compact: true });
-        notice.sheet.append(element(document, 'p', { className: 'yx-body-copy', text: '配置已保存。当前视频将在下一次进度上报时应用新倍速；平台限制倍速时会在日志中提示。' }), button(document, '确定', () => notice.close(), { className: 'yx-button yx-primary' }));
+        if (savedSpeed !== 1) notice.sheet.append(element(document, 'p', { className: 'yx-notice-warning', text: '2倍速以上可能会导致学习进度清零' }));
+        notice.sheet.append(element(document, 'p', { className: 'yx-body-copy', text: '当前视频将在下一次进度上报时应用新倍速。平台限制倍速时会在日志中提示。' }), button(document, '确定', () => notice.close(), { className: 'yx-button yx-primary' }));
     }, { id: 'yixue-save-settings', className: 'btn btn-success' });
     config.body.append(account.element, fields, answerOptions, element(document, 'div', { className: 'yixue-save-row' }, [saveConfig, saveStatus]));
     controls.append(tasks.element, config.element);
@@ -161,7 +190,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     const refreshProgress = button(document, '刷新进度', async () => {
         refreshProgress.disabled = true;
         try { await onRefreshProgress?.(); }
-        catch (error) { activityLog.append(error?.name === 'AbortError' ? '进度核验已停止。' : '进度暂时无法刷新，请稍后重试。', error?.name === 'AbortError' ? 'info' : 'warning'); }
+        catch (error) { activityLog.append(error?.name === 'AbortError' ? '进度刷新已停止。' : '进度暂时无法刷新，请稍后重试。', error?.name === 'AbortError' ? 'info' : 'warning'); }
         finally { if (!destroyed) refreshProgress.disabled = running; }
     }, { id: 'yixue-refresh-progress', className: 'yx-refresh', 'aria-label': '刷新课程进度（不重新执行任务）' });
     progressCard.body.querySelector('.yixue-card-heading').append(refreshProgress, runState);
@@ -170,7 +199,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     const completed = element(document, 'span', { id: 'yixue-completed-count', className: 'yixue-stat-value', text: '0' });
     const confirmedTasks = element(document, 'span', { id: 'yixue-confirmed-task-count', className: 'yixue-stat-value', text: '0' });
     const stats = element(document, 'div', { className: 'yixue-stats' });
-    for (const [label, value] of [['章节总数', total], ['已完成章节', completed], ['待处理章节', unconfirmed], ['本轮已确认任务', confirmedTasks]]) stats.append(element(document, 'div', { className: 'yixue-stat' }, [element(document, 'span', { className: 'yixue-stat-label', text: label }), value]));
+    for (const [label, value] of [['章节总数', total], ['已完成章节', completed], ['待处理章节', unconfirmed], ['本轮已完成任务', confirmedTasks]]) stats.append(element(document, 'div', { className: 'yixue-stat' }, [element(document, 'span', { className: 'yixue-stat-label', text: label }), value]));
     const chapterProgress = createProgressRing(document, { id: 'yixue-chapter-progress', labelId: 'yixue-chapter-progress-value', label: '章节完成进度', caption: '章节完成', tone: 'green' });
     const chapterProgressLabel = element(document, 'strong', { className: 'yixue-chapter-count', text: '0 / 0 章' });
     const taskName = element(document, 'strong', { id: 'yixue-current-task', text: '等待启动任务' });
@@ -184,7 +213,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
         element(document, 'div', { className: 'yixue-course-overall' }, [chapterProgress.element,
             element(document, 'div', { className: 'yixue-progress-copy' }, [
                 element(document, 'span', { className: 'yixue-progress-title', text: '章节完成进度' }), chapterProgressLabel,
-                element(document, 'p', { className: 'yixue-progress-note', text: '整章必做任务全部确认后，计入已完成。' }),
+                element(document, 'p', { className: 'yixue-progress-note', text: '整章必做任务全部完成后计入进度。' }),
             ])]),
         element(document, 'div', { className: 'yixue-current-resource' }, [
             progress.element, element(document, 'div', { className: 'yixue-progress-copy' }, [
@@ -216,7 +245,6 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
     return {
         element: main,
         log: activityLog.append,
-        setPhase(value) { phase = value; if (running) runState.textContent = phase === 'verifying' ? '核验中' : '运行中'; },
         setTask({ name, chapter, status }) {
             taskName.textContent = name;
             taskName.title = name;
@@ -224,12 +252,12 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
             chapterName.title = chapter || '';
             taskStatus.dataset.status = status;
             progress.element.dataset.status = status;
-            resourceTitle.textContent = ({ running: '正在处理', confirmed: '最近完成', skipped: '最近跳过', failed: '任务异常', pending: '待核实任务' })[status] || '当前任务';
-            taskStatus.textContent = ({ running: '处理中', confirmed: '已确认', skipped: '已跳过', failed: '失败', pending: '待核实' })[status] || '待开始';
+            resourceTitle.textContent = ({ running: '正在处理', confirmed: '最近完成', skipped: '最近跳过', failed: '任务异常' })[status] || '当前任务';
+            taskStatus.textContent = ({ running: '处理中', confirmed: '已完成', skipped: '已跳过', failed: '失败' })[status] || '待开始';
         },
-        setSummary({ confirmed = 0, skipped = 0, failed = 0, pending = 0, chapterIssues = 0 }) {
+        setSummary({ confirmed = 0, skipped = 0, failed = 0, chapterIssues = 0 }) {
             confirmedTasks.textContent = String(confirmed);
-            summaryLabel.textContent = `本轮已确认 ${confirmed} 项 · 跳过 ${skipped} 项 · 失败 ${failed} 项 · 待核实 ${pending} 项` + (chapterIssues ? ` · 章节读取异常 ${chapterIssues} 项` : '');
+            summaryLabel.textContent = `本轮完成 ${confirmed} 项 · 跳过 ${skipped} 项 · 失败 ${failed} 项` + (chapterIssues ? ` · 章节读取异常 ${chapterIssues} 项` : '');
         },
         setProgress(percent) {
             progress.setValue(percent);
@@ -254,7 +282,7 @@ function createDashboard(context, { courseName = '课程任务', onRun, onConnec
             chapterProgress.setValue(value);
         },
         setRunning, refreshSettings,
-        destroy() { if (!destroyed) { destroyed = true; screenAwake.destroy(); runController?.abort(abortError()); clearInterval(runTimer); unsubscribe(); account.destroy(); productInfo.destroy(); main.remove(); } },
+        destroy() { if (!destroyed) { destroyed = true; nightNotice?.close(); screenAwake.destroy(); runController?.abort(abortError()); clearInterval(runTimer); unsubscribe(); account.destroy(); productInfo.destroy(); main.remove(); } },
     };
 }
 

@@ -6,9 +6,9 @@ const createProductInfo = require('./product-info');
 const product = require('../core/product');
 
 function createEntry(context, callbacks) {
-    const { document, bank, access, modal, connect, saveToken } = context;
+    const { document, bank, settings, access, modal, connect, saveToken } = context;
     const dialog = modal.open({ id: 'yixue-entry', title: product.brand, subtitle: '选择需要使用的课程功能' });
-    const account = createAccountView({ document, bank, prefix: 'yixue-entry', onConnect: connect, onSave: saveToken, getDisplayToken: access.getDisplayToken });
+    const account = createAccountView({ document, bank, settings, prefix: 'yixue-entry', onConnect: connect, onSave: saveToken, getDisplayToken: access.getDisplayToken });
     dialog.onCleanup(account.destroy);
     const productInfo = createProductInfo(context, { compact: true, showPricing: false });
     dialog.onCleanup(productInfo.destroy);
@@ -43,3 +43,4 @@ function createEntry(context, callbacks) {
 }
 
 module.exports = createEntry;
+

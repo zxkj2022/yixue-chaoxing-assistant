@@ -84,7 +84,7 @@ function createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog
             if (signal?.aborted) { stopped = true; break; }
             let response;
             try {
-                const ai = useAi ?? settings?.get?.('doAI', false) ?? false;
+                const ai = useAi ?? settings?.get?.('doAI', true) ?? true;
                 response = await bank.search({ title: question.title, options: question.options.slice(), type: isBooleanChoice(question) ? 'judge' : question.type, use_ai: ai === true }, { signal });
                 const queryFailed = Number(response?.code) !== 1 && response?.reason !== 'not-found';
                 queryFailures = queryFailed ? queryFailures + 1 : 0;
@@ -138,3 +138,4 @@ function createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog
 }
 
 module.exports = { createQuestionWorkflow, readQuestions, applyAnswer, collectQuestions };
+

@@ -10,8 +10,9 @@ before(async () => { browser = await chromium.launch({ channel: 'chrome', headle
 after(async () => { await browser?.close(); });
 
 async function fixture(t, { width = 390, height = 844, desktop = false, desktopWidth = 980 } = {}) {
-    const page = await browser.newPage({ viewport: { width: desktop ? desktopWidth : width, height }, screen: { width, height }, isMobile: !desktop, hasTouch: true, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+    const page = await browser.newPage({ viewport: { width: desktop ? desktopWidth : width, height }, screen: { width, height }, isMobile: !desktop, hasTouch: true, deviceScaleFactor: 1, reducedMotion: 'reduce', timezoneId: 'Asia/Shanghai' });
     page.setDefaultTimeout(5000); t.after(() => page.close());
+    await page.clock.setFixedTime('2026-11-09T12:00:00+08:00');
     await page.route('**/*', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>逻辑学导论-首页</title><meta name="viewport" content="width=1200"><meta name="Viewport" content="width=1280,initial-scale=.2"><style>html,body{min-width:1200px;width:1200px;min-height:4000px;height:100vh;overflow:hidden;margin:8px;transform:translateX(3px);zoom:.9}body{font-size:12px}</style></head><body style="min-width:1100px"><h1>平台原页面</h1></body></html>' }));
     await page.goto('https://mooc1.chaoxing.com/mooc-ans/course/yixue-console.html?courseid=101&classid=202&uid=404');
     await page.addScriptTag({ content: testingBundle });

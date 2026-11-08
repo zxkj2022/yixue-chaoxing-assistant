@@ -43,7 +43,7 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
         aiToggle.setAttribute('aria-checked', String(enabled));
         try { await onAiToggle?.(enabled); }
         catch (error) { appendLog(document, logs, error?.message || error, 'error'); }
-    }, { className: 'yixue-panel-button yixue-ai-toggle', role: 'switch', 'aria-checked': String(settings.get('doAI', false) === true) });
+    }, { className: 'yixue-panel-button yixue-ai-toggle', role: 'switch', 'aria-checked': String(settings.get('doAI', true) === true) });
     let paused = false;
     let destroyed = false;
     const pauseWaiters = new Set();
@@ -102,7 +102,7 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
         element: panel,
         log: (message, tone) => appendLog(document, logs, message, tone),
         setSummary(stats = {}) {
-            const labels = { total: '共', completed: '完成', answered: '已填', matched: '命中', skipped: '跳过', failed: '失败', pending: '待核实', unconfirmed: '待核实' };
+            const labels = { total: '共', completed: '完成', answered: '已填', matched: '命中', skipped: '跳过', failed: '失败' };
             summary.textContent = Object.entries(labels).filter(([key]) => stats[key] !== undefined).map(([key, label]) => `${label} ${stats[key]}`).join(' · ') || '等待处理题目';
         },
         isPaused: () => paused,
@@ -135,3 +135,4 @@ function createQuestionPanel(context, { title = '题目助手', onConnect, onRef
 }
 
 module.exports = { createQuestionPanel, maskToken };
+

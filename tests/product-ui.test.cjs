@@ -8,8 +8,9 @@ let browser;
 before(async () => { browser = await chromium.launch({ channel: 'chrome', headless: true }); });
 after(async () => { await browser?.close(); });
 async function fixture(t, { conflict = '', width = 390 } = {}) {
-    const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: 'reduce', timezoneId: 'Asia/Shanghai' });
     page.setDefaultTimeout(5000); t.after(() => page.close());
+    await page.clock.setFixedTime('2026-11-09T12:00:00+08:00');
     await page.route('**/*', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<!doctype html><html><head><title>测试课程</title></head><body></body></html>' }));
     await page.goto('https://mooc1.chaoxing.com/mooc-ans/course/yixue-console.html?courseid=101&classid=202&uid=404');
     await page.evaluate(({ conflict, metadata }) => {

@@ -35,8 +35,9 @@ async function install(frame, { captureFrames = false, apiToken = false } = {}) 
     await frame.evaluate(() => { void testLoad('app').bootstrap().catch(error => bootErrors.push(error.message)); });
 }
 async function fixture(t, { entry = false, frame = false, http = false } = {}) {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, timezoneId: 'Asia/Shanghai' });
     page.setDefaultTimeout(2000); t.after(() => page.close());
+    await page.clock.setFixedTime('2026-11-09T12:00:00+08:00');
     const route = entry ? '/mooc-ans/mycourse/stu' : '/mooc-ans/course/yixue-console.html';
     const origin = (http ? 'http' : 'https') + '://mooc1.chaoxing.com';
     const path = route + '?courseid=101&classid=202&uid=404';

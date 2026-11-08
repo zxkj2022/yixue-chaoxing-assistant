@@ -40,7 +40,7 @@ test('five hundred quiz cycles release every deadline and abort listener', async
     t.mock.method(globalThis, 'clearTimeout', timer => { timers.delete(timer); cancel(timer); });
     const f = fixture('normal');
     for (let i = 0; i < 500; i++) {
-        assert.equal(await f.run(), 'pending');
+        await assert.rejects(f.run(), /提交未成功/);
         assert.equal(getEventListeners(f.controller.signal, 'abort').length, 0);
     }
     assert.equal(f.calls(), 1000);
@@ -50,7 +50,7 @@ test('five hundred quiz cycles release every deadline and abort listener', async
 test('filled answers remain available when the page has no supported save API', async () => {
     const f = fixture('normal');
     for (const key of ['toadd', 'submitAction', 'noSubmit']) delete f.host[key];
-    assert.equal(await f.run(), 'pending');
+    assert.equal(await f.run(), 'skipped');
     assert.equal(f.retained(), 1); assert.equal(f.calls(), 0);
 });
 
@@ -58,7 +58,7 @@ for (const abort of [false, true]) test('partial answers survive an interrupted 
     const f = fixture('normal');
     f.env.questions.run = async () => { if (abort) f.controller.abort(); return { total: 2, answered: 1, stopped: true }; };
     if (abort) await assert.rejects(f.run(), { name: 'AbortError' });
-    else assert.equal(await f.run(), 'pending');
+    else assert.equal(await f.run(), 'skipped');
     assert.equal(f.retained(), 1); assert.equal(f.calls(), 0);
 });
 
@@ -100,6 +100,23 @@ test('a completed observed submission releases the retained document and restore
     f.host.toadd = () => f.host.fetch('/work/save');
     f.host.submitAction = () => { submits++; return f.host.fetch('/work/submit'); };
     f.env.questions.openPage = async () => ({ document: {}, window: f.host, retain() {}, release() { released++; } });
-    assert.equal(await f.run(), 'pending');
+    assert.equal(await f.run(), 'confirmed');
     assert.equal(submits, 1); assert.equal(released, 1); assert.equal(f.host.fetch, original);
+});
+
+test('a successful preparation request alone does not count as a submission', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture('normal');
+    let invoked;
+    const submitInvoked = new Promise(resolve => { invoked = resolve; });
+    f.host.fetch = async () => ({ status: 200, clone: () => ({ text: async () => 'ok' }) });
+    f.host.toadd = () => f.host.fetch('/work/save');
+    f.host.submitAction = invoked;
+    const pending = f.run();
+    const failure = assert.rejects(pending, /提交未成功/);
+    await submitInvoked;
+    await new Promise(setImmediate);
+    t.mock.timers.tick(10000);
+    await failure;
+    assert.equal(f.retained(), 1);
 });

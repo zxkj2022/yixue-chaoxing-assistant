@@ -36,8 +36,8 @@ async function runClassReplay(task, env) {
             env.progress(Math.floor(position / duration * 100));
         }
     }
-    env.log('课堂直播回放进度已上传，等待平台核实：' + env.name, 'warning');
-    return 'pending';
+    env.log('课堂直播回放进度已上传，请在学习通查看完成状态：' + env.name, 'info', 'status');
+    return 'skipped';
 }
 
 function scriptString(html, variable) {
@@ -157,8 +157,9 @@ async function runLive(task, env) {
         await env.wait((next - current) * 1000, env.signal);
         position = next;
     }
-    env.log('直播回放进度已上传，请回到学习通核对完成状态：' + env.name, 'warning');
-    return 'pending';
+    env.log('直播回放进度已上传，请在学习通查看完成状态：' + env.name, 'info', 'status');
+    return 'skipped';
 }
 
 module.exports = { runClassReplay, runLive };
+

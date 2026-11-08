@@ -121,7 +121,7 @@ test('Zhihuishu official-exam DOM reads its type and exact option text and verif
         return questions.length ? { run: await workflow.run(document), calls, selected: document.querySelector('[aria-checked=true]').textContent } : { calls };
     }));
     assert.equal(result.run?.answered, 1);
-    assert.deepEqual(result.calls[0], { title: '智慧树正式考试题', options: ['甲', '乙'], type: 'single', use_ai: false });
+    assert.deepEqual(result.calls[0], { title: '智慧树正式考试题', options: ['甲', '乙'], type: 'single', use_ai: true });
     assert.equal(result.selected, 'B. 乙');
 });
 

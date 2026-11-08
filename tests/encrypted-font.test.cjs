@@ -88,5 +88,5 @@ test('font markers confined to omitted answers or hidden content do not block re
         return { run: await workflow.run(document), calls };
     }));
     assert.equal(result.run.answered, 1);
-    assert.deepEqual(result.calls, [{ title: '普通题干', options: ['甲', '乙'], type: 'single', use_ai: false }]);
+    assert.deepEqual(result.calls, [{ title: '普通题干', options: ['甲', '乙'], type: 'single', use_ai: true }]);
 });

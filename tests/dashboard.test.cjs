@@ -8,22 +8,27 @@ const testingBundle = bundle({ testing: true, compact: true });
 let browser;
 before(async () => { browser = await chromium.launch({ channel: 'chrome', headless: true }); });
 after(async () => { await browser?.close(); });
-async function fixture(t, width = 390) {
-    const page = await browser.newPage({ viewport: { width, height: 844 }, reducedMotion: 'reduce' });
+const midday = '2026-11-09T12:00:00+08:00';
+async function fixture(t, width = 390, { fakeTimers = false } = {}) {
+    const page = await browser.newPage({ viewport: { width, height: 844 }, reducedMotion: 'reduce', timezoneId: 'Asia/Shanghai' });
     page.setDefaultTimeout(4000);
     t.after(() => page.close());
+    if (fakeTimers) await page.clock.install({ time: midday });
+    else await page.clock.setFixedTime(midday);
     await page.setContent('<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style></head><body></body></html>');
     await page.addScriptTag({ content: testingBundle });
     await page.evaluate(() => {
         const root = document.createElement('div'); document.body.append(root);
         const style = document.createElement('style'); style.textContent = testLoad('ui/dialogs.css') + testLoad('ui/dashboard.css'); document.head.append(style);
         const values = new Map(), listeners = new Set();
-        window.settings = { get: (key, fallback) => values.has(key) ? values.get(key) : fallback, set: (key, value) => values.set(key, value) };
+        window.settings = testLoad('core/settings').createSettings({ read: (key, fallback) => values.has(key) ? values.get(key) : fallback, write: (key, value) => values.set(key, value) });
         window.accountData = { points: 82, member: true, member_until: 1900000000, daily_limit: 200, daily_remaining: 120, vip_level: 3, plan_name: 'VVIP' };
         window.bank = { getToken: () => 'ys_' + 'a'.repeat(40), balanceState: () => ({ data: accountData }), balanceLabel: () => '积分 82 · 今日会员额度 120 / 200 次', capabilitiesLabel: () => 'AI 可用', onBalanceChange: fn => { listeners.add(fn); return () => listeners.delete(fn); }, refreshBalance: async () => {}, refreshCapabilities: async () => {} };
         window.notifyAccount = () => { for (const fn of listeners) fn(); };
         window.runTask = async () => {};
-        window.dashboard = testLoad('ui/dashboard')({ document, window, root, bank, settings, access: { getDisplayToken: bank.getToken }, logoUrl: testLoad('ui/logo'), connect() {}, saveToken() {}, modal: testLoad('ui/modal')({ document, window, root, logoUrl: testLoad('ui/logo') }) }, { courseName: '移动端课程任务控制台', onRun: options => runTask(options) });
+        const context = { document, window, root, bank, settings, access: { getDisplayToken: bank.getToken }, logoUrl: testLoad('ui/logo'), connect() {}, saveToken() {}, modal: testLoad('ui/modal')({ document, window, root, logoUrl: testLoad('ui/logo') }) };
+        window.dashboard = testLoad('ui/dashboard')(context, { courseName: '移动端课程任务控制台', onRun: options => runTask(options) });
+        window.showEntry = () => testLoad('ui/entry')(context, {});
     });
     return page;
 }
@@ -47,28 +52,26 @@ test('normal skips are excluded from exceptions, real failures remain', async t 
     assert.equal(await page.getByText('跳过', { exact: true }).count(), 2);
 });
 
-test('submitted quizzes waiting for confirmation have their own filter and stay out of exceptions', async t => {
+test('successfully submitted quizzes only appear under completion and all records', async t => {
     const page = await fixture(t);
     await page.evaluate(() => {
-        dashboard.log('章节测验已请求提交，等待平台确认：课程一', 'pending');
+        dashboard.log('章节测验提交成功：课程一', 'success');
         dashboard.log('题源暂不可用，请稍后重试', 'warning');
         dashboard.log('提交请求失败，请人工核对', 'error');
         dashboard.log('章节测验已确认完成：课程二', 'success');
     });
     await page.getByRole('button', { name: '仅看异常记录' }).click();
     assert.equal(await page.locator('.yixue-log-line:visible').count(), 2);
-    assert.equal(await page.getByText('章节测验已请求提交，等待平台确认：课程一').isVisible(), false);
-    await page.getByRole('button', { name: '仅看待核实记录' }).click();
-    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
-    assert.equal(await page.locator('.yixue-log-line:visible .yixue-log-badge').innerText(), '核验');
+    assert.equal(await page.getByText('章节测验提交成功：课程一').isVisible(), false);
+    assert.equal(await page.getByRole('button', { name: '仅看待核实记录' }).count(), 0);
     await page.getByRole('button', { name: '仅看完成记录' }).click();
-    assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
+    assert.equal(await page.locator('.yixue-log-line:visible').count(), 2);
 });
 
-test('resolved task logs leave the pending filter and enter completion without duplicate records', async t => {
+test('later confirmations update an existing warning without adding a duplicate log', async t => {
     const page = await fixture(t);
-    await page.evaluate(() => dashboard.log('等待平台确认：测验一', 'pending', { key: 'run-1:quiz-1' }));
-    await page.getByRole('button', { name: '仅看待核实记录' }).click();
+    await page.evaluate(() => dashboard.log('尚未提交：测验一', 'warning', { key: 'run-1:quiz-1' }));
+    await page.getByRole('button', { name: '仅看异常记录' }).click();
     assert.equal(await page.locator('.yixue-log-line:visible').count(), 1);
     await page.evaluate(() => dashboard.log('已确认任务完成：测验一', 'success', { key: 'run-1:quiz-1' }));
     assert.equal(await page.locator('.yixue-log-line:visible').count(), 0);
@@ -110,7 +113,7 @@ test('course events update chapter rings and summary after submitted quizzes are
         });
         return runner.run();
     });
-    assert.equal(summary.confirmed, 2); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 2); assert.equal(summary.failed, 0);
     assert.equal(await page.locator('#yixue-chapter-progress-value').innerText(), '100%');
     assert.equal(await page.locator('#yixue-unconfirmed-count').innerText(), '0');
     assert.match(await page.locator('.yixue-chapter-count').innerText(), /3 \/ 3 章/);
@@ -129,6 +132,24 @@ test('member badges use the returned tier and remain honest with older APIs', as
     }
     await page.evaluate(() => { accountData.member = false; notifyAccount(); });
     assert.equal(await page.locator('[data-yixue-member-badge]').innerText(), '普通用户');
+});
+test('Token help and a persistent AI fallback switch fill the entry card while dashboard account details are removed', async t => {
+    const page = await fixture(t, 320);
+    assert.equal(await page.getByText('额度与 AI 服务详情').count(), 0);
+    assert.equal(await page.locator('#yixue-option-doAI').isChecked(), true);
+    await page.evaluate(() => { showEntry(); });
+    const entry = page.locator('#yixue-entry');
+    const tokenCard = entry.locator('.yx-account-field').first();
+    assert.equal(await tokenCard.getByText(/题库网站.*脚本接入/).isVisible(), true);
+    assert.equal(await tokenCard.getByRole('button', { name: '获取 Token' }).isVisible(), true);
+    const fallback = tokenCard.getByRole('checkbox', { name: /AI 兜底/ });
+    assert.equal(await fallback.isChecked(), true);
+    await fallback.uncheck();
+    assert.equal(await page.evaluate(() => settings.get('doAI')), false);
+    await entry.getByRole('button', { name: '关闭', exact: true }).click();
+    await page.evaluate(() => { showEntry(); });
+    assert.equal(await fallback.isChecked(), false);
+    assert.ok(await entry.evaluate(node => node.scrollWidth <= node.clientWidth));
 });
 test('failed membership refresh displays the real error instead of waiting or claiming a connection', async t => {
     const page = await fixture(t);
@@ -151,15 +172,64 @@ test('saving a speed validates the input and explains when it takes effect', asy
     await page.locator('#yixue-video-speed').fill('4');
     await page.locator('#yixue-save-settings').click();
     assert.equal(await page.evaluate(() => settings.get('beisu')), 4);
+    assert.equal(await page.getByText('2倍速以上可能会导致学习进度清零', { exact: true }).isVisible(), true);
     assert.match(await page.locator('#yixue-settings-saved').innerText(), /下一次进度上报/);
     await page.getByRole('button', { name: '确定', exact: true }).click();
     await page.locator('#yixue-video-speed').fill('99');
     await page.locator('#yixue-save-settings').click();
     assert.equal(await page.evaluate(() => settings.get('beisu')), 4);
+    assert.equal(await page.locator('#yixue-settings-saved').count(), 0);
+    await page.locator('#yixue-video-speed').fill('1.25');
+    await page.locator('#yixue-save-settings').click();
+    assert.equal(await page.getByText('2倍速以上可能会导致学习进度清零', { exact: true }).isVisible(), true);
+    await page.getByRole('button', { name: '确定', exact: true }).click();
+    await page.locator('#yixue-video-speed').fill('1');
+    await page.locator('#yixue-save-settings').click();
+    assert.equal(await page.locator('#yixue-settings-saved').isVisible(), true);
+    assert.equal(await page.getByText('2倍速以上可能会导致学习进度清零', { exact: true }).count(), 0);
+});
+test('the runtime badge switches from seconds to minutes to hours', async t => {
+    const page = await fixture(t, 390, { fakeTimers: true });
+    await page.clock.pauseAt('2026-11-09T12:01:00+08:00');
+    await page.evaluate(() => { window.runTask = () => new Promise(() => {}); document.querySelector('#yixue-run-course').click(); });
+    const status = page.locator('.yixue-run-state');
+    await page.clock.fastForward(59000);
+    assert.equal(await status.innerText(), '运行中 · 59秒');
+    await page.clock.fastForward(1000);
+    assert.equal(await status.innerText(), '运行中 · 1分');
+    await page.clock.fastForward(3540000);
+    assert.equal(await status.innerText(), '运行中 · 1小时');
+    await page.clock.fastForward(300000);
+    assert.equal(await status.innerText(), '运行中 · 1小时5分');
+});
+test('nighttime starts can be canceled or continued, and daytime starts are direct', async t => {
+    const page = await fixture(t);
+    await page.evaluate(() => { window.runCount = 0; window.runTask = ({ signal }) => { runCount++; return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }; });
+    const start = page.getByRole('button', { name: '开始运行', exact: true });
+    const stop = page.getByRole('button', { name: '停止运行', exact: true });
+    const notice = page.getByRole('dialog', { name: '夜间运行提醒' });
+    await page.clock.setFixedTime('2026-11-09T20:00:00+08:00');
+    await start.click();
+    assert.match(await notice.innerText(), /晚上运行可能会导致学习进度清零哦，建议早上八点再开始学习/);
+    await notice.getByRole('button', { name: '取消' }).click();
+    assert.equal(await page.evaluate(() => runCount), 0);
+    await page.clock.setFixedTime('2026-11-10T07:59:59+08:00');
+    await start.click();
+    await notice.getByRole('button', { name: '继续运行' }).click();
+    assert.equal(await page.evaluate(() => runCount), 1);
+    await stop.click();
+    assert.equal(await notice.count(), 0);
+    for (const time of ['2026-11-10T08:00:00+08:00', '2026-11-10T19:59:59+08:00']) {
+        await page.clock.setFixedTime(time);
+        await start.click();
+        await stop.click();
+    }
+    assert.equal(await page.evaluate(() => runCount), 3);
 });
 test('the actual app aborts an in-flight catalog request and restores its start action', async t => {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Shanghai' });
     page.setDefaultTimeout(5000); t.after(() => page.close());
+    await page.clock.setFixedTime(midday);
     await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>测试课程-首页</title></head><body></body></html>' }));
     await page.goto('https://mooc1.chaoxing.com/mooc-ans/course/yixue-console.html?courseid=101&classid=202&uid=404');
     await page.evaluate(() => {

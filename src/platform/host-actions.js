@@ -1,7 +1,17 @@
 'use strict';
 
-// Observe only the quiz frame's own save/submit requests. A 2xx response means
-// that the request finished, not that the platform marked the task complete.
+const { isLoginResponse } = require('../core/transport');
+
+function acceptedResponse(status, body, finalUrl) {
+    const responseText = typeof body === 'string' ? body : '';
+    if (!(status >= 200 && status < 300) || isLoginResponse({ responseText, finalUrl })) return false;
+    if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch (_) { return true; }
+    }
+    return body !== false && body?.status !== false && body?.success !== false && body?.result !== false;
+}
+
+// Observe the quiz frame's own save/submit requests through response completion.
 function observeHostActions(host, { signal, timeoutMs = 10000, settleMs = 100 } = {}) {
     let resolveResult, timer, settleTimer, finished = false, observed = 0, pending = 0, failed = false, available = false;
     let armed = false, stageObserved = 0;
@@ -47,10 +57,9 @@ function observeHostActions(host, { signal, timeoutMs = 10000, settleMs = 100 } 
                 // Attach directly to the frame's promise. Promise.resolve across
                 // realms can attach after the host has already consumed its body.
                 if (end) request.then(response => {
-                    const successful = response.status >= 200 && response.status < 300;
                     // Fetch resolves at headers; keep the document alive until its
                     // response body is complete, without consuming the host's body.
-                    try { return Promise.resolve(response.clone().text()).then(() => end(successful), () => end(false)); }
+                    try { return Promise.resolve(response.clone().text()).then(body => end(acceptedResponse(response.status, body, response.url)), () => end(false)); }
                     catch (_) { end(false); }
                 }, () => end(false)).catch(() => end(false));
                 return request;
@@ -71,7 +80,10 @@ function observeHostActions(host, { signal, timeoutMs = 10000, settleMs = 100 } 
             const wrappedSend = function () {
                 const request = details.get(this), end = request && begin(request.url, request.method);
                 if (!end) return send.apply(this, arguments);
-                const settled = () => end(this.status >= 200 && this.status < 300);
+                const settled = () => {
+                    const body = this.responseType && this.responseType !== 'text' ? this.response : this.responseText;
+                    end(acceptedResponse(this.status, body, this.responseURL));
+                };
                 this.addEventListener('loadend', settled, { once: true });
                 cleanups.push(() => this.removeEventListener('loadend', settled));
                 try { return send.apply(this, arguments); }
@@ -100,3 +112,4 @@ function observeHostActions(host, { signal, timeoutMs = 10000, settleMs = 100 } 
 }
 
 module.exports = { observeHostActions };
+

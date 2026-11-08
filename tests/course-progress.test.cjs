@@ -15,11 +15,14 @@ function fixture(options = {}) {
         wait: async milliseconds => { state.now += milliseconds; state.waits.push(milliseconds); await options.onWait?.(milliseconds, state); },
         questions: {
             openPage: async () => {
-                const host = { location: { href: origin + '/work/phone/work' }, fetch: async () => ({ status: 200, clone: () => ({ text: async () => 'ok' }) }) };
+                const host = { location: { href: origin + '/work/phone/work' }, fetch: async path => {
+                    const { status = 200, body = 'ok', url } = path === '/work/submit' ? options.submission || {} : {};
+                    return { status, url, clone: () => ({ text: async () => body }) };
+                } };
                 host.toadd = () => host.fetch('/work/save');
                 host.submitAction = () => { state.submitted++; return host.fetch('/work/submit'); };
                 host.noSubmit = () => { state.saved++; return host.fetch('/work/save'); };
-                return { document: {}, window: host, retain() {}, release() {} };
+                return { document: { URL: options.workPageUrl }, window: host, retain() {}, release() {} };
             },
             run: async () => { state.answered++; return options.questionResult || { total: 1, answered: 1, accuracy: 100 }; },
         },
@@ -54,10 +57,10 @@ function fixture(options = {}) {
 }
 const last = (state, type) => state.events.filter(event => event.type === type).at(-1);
 
-test('a fresh task confirmation counts a submitted quiz even while the catalog is stale', async () => {
-    const f = fixture({ freshTasks: () => [quiz('1', { isPassed: true })] });
+test('a fresh task confirmation counts a quiz when the submit request does not report success', async () => {
+    const f = fixture({ submission: { status: 502 }, freshTasks: () => [quiz('1', { isPassed: true })] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
     assert.equal(f.state.submitted, 1); assert.equal(f.state.answered, 1);
     assert.equal(f.state.events.some(event => event.type === 'log' && event.tone === 'warning'), false);
@@ -66,18 +69,17 @@ test('a fresh task confirmation counts a submitted quiz even while the catalog i
     assert.match(verification.headers.Referer, /chapterId=1/);
 });
 
-test('chapter catalog confirmation moves pending tasks into confirmed exactly once', async () => {
-    const f = fixture({ remaining: (chapter, state) => state.submitted ? 0 : 1 });
+test('chapter catalog confirmation reconciles a required task left for manual submission', async () => {
+    const f = fixture({ settings: { autoSubmit: false }, remaining: (chapter, state) => state.saved ? 0 : 1 });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.skipped, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
-    assert.equal(f.state.submitted, 1);
-    assert.equal(f.state.events.filter(event => event.type === 'log' && /完成状态待核实/.test(event.message) && event.tone === 'warning').length, 0);
+    assert.equal(f.state.submitted, 0);
 });
 
 for (const evidence of ['catalog', 'card']) test('delayed ' + evidence + ' evidence updates earlier chapters during a later video without replacing its progress', async () => {
     let during;
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz()] }, { id: '2', tasks: [video] }],
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz()] }, { id: '2', tasks: [video] }], submission: { status: 502 },
         remaining: (chapter, state) => evidence === 'catalog' && chapter.id === '1' && state.videoWaited ? 0 : 1,
         freshTasks: (chapter, page, state) => chapter.id === '1' && evidence === 'card' && state.videoWaited ? [quiz('1', { isPassed: true })] : [],
         onWait: (milliseconds, state) => { if (milliseconds === 60000) state.videoWaited = true; },
@@ -85,59 +87,68 @@ for (const evidence of ['catalog', 'card']) test('delayed ' + evidence + ' evide
     });
     const summary = await f.run();
     assert.equal(during?.counts.unconfirmed, 1);
-    assert.equal(during.summary.pending, 0); assert.equal(during.summary.confirmed, 1);
+    assert.equal(during.summary.failed, 0); assert.equal(during.summary.confirmed, 1);
     assert.equal(during.task.name, '后续视频'); assert.equal(during.task.status, 'running');
     assert.equal(during.progress.percent, 0);
-    assert.equal(summary.confirmed, 2); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 2); assert.equal(summary.failed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
 });
 
-test('a final bounded reconciliation catches platform updates after the last chapter', async () => {
-    const f = fixture({ remaining: (chapter, state) => state.finalWaited ? 0 : 1,
-        onWait: (milliseconds, state) => { if (milliseconds === 3000) state.finalWaited = true; },
-    });
-    const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
-    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
-});
-
-test('HTTP success without completion evidence stays pending and never resubmits', async () => {
+test('an accepted quiz submission counts immediately while the directory and cards stay stale', async () => {
     const f = fixture(); const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
-    assert.equal(last(f.state, 'counts').unconfirmed, 1); assert.equal(f.state.submitted, 1);
-    assert.ok(f.state.catalogReads >= 3 && f.state.catalogReads <= 6);
-    assert.ok(f.state.requests.length < 35);
-    const waiting = f.state.events.find(event => event.type === 'log' && /等待平台|正在核验/.test(event.message));
-    assert.equal(waiting?.tone, 'pending');
+    assert.deepEqual(summary, { confirmed: 1, skipped: 0, failed: 0, chapterIssues: 0 });
+    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
+    assert.equal(last(f.state, 'task').status, 'confirmed');
+    assert.ok(f.state.events.some(event => event.tone === 'success' && /测验提交成功/.test(event.message)));
+    assert.equal(f.state.catalogReads, 1); assert.equal(f.state.freshReads, 0);
+    assert.equal((await f.runner.refresh()).confirmed, 1);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
+
+test('repeated quiz attachments in a chapter are only submitted and counted once', async () => {
+    const f = fixture({ chapters: [{ id: '1', pages: [[quiz()], [quiz()]] }] });
+    assert.equal((await f.run()).confirmed, 1);
+    assert.equal(f.state.submitted, 1); assert.equal(f.state.answered, 1);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0);
+});
+
+for (const submission of [{ status: 502 }, { body: '{"status":false}' }, { url: origin + '/login' }]) {
+    test('a rejected or redirected submit request remains an exception: ' + JSON.stringify(submission), async () => {
+        const f = fixture({ submission });
+        const summary = await f.run();
+        assert.equal(summary.confirmed, 0); assert.equal(summary.failed, 1);
+        assert.equal(last(f.state, 'counts').unconfirmed, 1); assert.equal(f.state.submitted, 1);
+        assert.ok(f.state.events.some(event => event.tone === 'danger' && /提交未成功/.test(event.message)));
+    });
+}
 
 test('confirmation for a different quiz cannot finish the submitted task', async () => {
-    const f = fixture({ freshTasks: () => [quiz('2', { isPassed: true })] });
+    const f = fixture({ submission: { status: 502 }, freshTasks: () => [quiz('2', { isPassed: true })] });
     const summary = await f.run();
-    assert.equal(summary.pending, 1); assert.equal(summary.confirmed, 0);
+    assert.equal(summary.failed, 1); assert.equal(summary.confirmed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 1);
 });
 
 test('verification reloads the original card page instead of assuming every quiz is on page zero', async () => {
-    const f = fixture({ chapters: [{ id: '1', pages: [[{ type: 'text', property: { name: '说明' } }], [quiz()]] }],
+    const f = fixture({ chapters: [{ id: '1', pages: [[{ type: 'text', property: { name: '说明' } }], [quiz()]] }], submission: { status: 502 },
         freshTasks: (chapter, page) => page === 1 ? [quiz('1', { isPassed: true })] : [],
     });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0); assert.equal(summary.skipped, 1);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0); assert.equal(summary.skipped, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
 
 test('a completed task cannot finish a chapter with another required task still disabled', async () => {
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz(), video] }], settings: { doVideo: false }, freshTasks: () => [quiz('1', { isPassed: true }), video] });
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz(), video] }], settings: { doVideo: false } });
     const summary = await f.run();
     assert.equal(summary.confirmed, 1); assert.equal(summary.skipped, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 1);
 });
 
 test('a zero task-point count does not confirm a non-task-point quiz', async () => {
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { job: false })] }], settings: { doNoMission: true }, remaining: (chapter, state) => state.submitted ? 0 : 1 });
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { job: false })] }], settings: { doNoMission: true, autoSubmit: false }, remaining: (chapter, state) => state.saved ? 0 : 1 });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 1);
 });
 
@@ -149,67 +160,67 @@ test('already submitted review pages are verified without a new save or submit',
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
 
-test('stopping during final reconciliation ends immediately and sends no further requests', async () => {
-    const f = fixture({ onWait: (milliseconds, state) => { if (milliseconds === 3000) state.controller.abort(); } });
-    await assert.rejects(f.run(), { name: 'AbortError' });
-    assert.equal(f.state.submitted, 1);
-    assert.equal(f.state.catalogReads, 2);
-});
-
-test('a failed status refresh keeps the chapter pending and warns once', async () => {
-    const f = fixture({ catalogError: new Error('offline') });
+test('a failed status refresh keeps the chapter incomplete and warns once', async () => {
+    const f = fixture({ settings: { autoSubmit: false }, catalogError: new Error('offline') });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 1);
     assert.equal(f.state.events.filter(event => event.type === 'log' && /章节完成状态暂未刷新/.test(event.message)).length, 1);
 });
 
-test('a saved draft remains pending and tells the user it has not been submitted', async () => {
+test('a saved draft remains incomplete and tells the user it has not been submitted', async () => {
     const f = fixture({ settings: { autoSubmit: false } }); const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1);
     assert.equal(f.state.submitted, 0); assert.equal(f.state.saved, 1);
     assert.ok(f.state.events.some(event => event.type === 'log' && event.tone === 'warning' && /尚未提交/.test(event.message)));
 });
 
-test('a review page without task completion evidence remains pending without resubmitting', async () => {
-    const f = fixture({ questionResult: { total: 1, answered: 0, review: true } }); const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+test('an official quiz review URL is completion evidence without another submission', async () => {
+    const f = fixture({ questionResult: { total: 1, answered: 0, review: true }, workPageUrl: origin + '/work/lookWork' });
+    assert.equal((await f.run()).confirmed, 1);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0);
     assert.equal(f.state.submitted, 0); assert.equal(f.state.saved, 0);
-    assert.ok(f.state.events.some(event => event.type === 'log' && event.tone === 'pending' && /批阅页面/.test(event.message)));
 });
 
-test('card refresh errors preserve pending results without reporting task execution failure', async () => {
-    const f = fixture({ freshError: new Error('offline') }); const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1); assert.equal(summary.failed, 0);
+test('review-looking content alone remains incomplete without resubmitting', async () => {
+    const f = fixture({ questionResult: { total: 1, answered: 0, review: true } }); const summary = await f.run();
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1);
+    assert.equal(f.state.submitted, 0); assert.equal(f.state.saved, 0);
+    assert.ok(f.state.events.some(event => event.type === 'log' && event.tone === 'warning' && /批阅页面/.test(event.message)));
+});
+
+test('card refresh errors keep drafts incomplete without reporting task execution failure', async () => {
+    const f = fixture({ settings: { autoSubmit: false }, freshError: new Error('offline') }); const summary = await f.run();
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1); assert.equal(summary.failed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 1);
     assert.equal(f.state.events.filter(event => event.type === 'log' && /章节完成状态暂未刷新/.test(event.message)).length, 1);
 });
 
 test('platform rate limits during status verification stop the run without repeating submission', async () => {
-    const f = fixture({ freshError: Object.assign(new Error('limited'), { status: 429 }) });
+    const f = fixture({ submission: { status: 502 }, freshError: Object.assign(new Error('limited'), { status: 429 }) });
     await assert.rejects(f.run(), /过于频繁/);
     assert.equal(f.state.submitted, 1); assert.equal(f.state.freshReads, 1);
 });
 
 test('a non-task-point quiz can finish when its own card confirms completion', async () => {
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { job: false })] }], settings: { doNoMission: true }, freshTasks: () => [quiz('1', { job: false, isPassed: true })] });
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { job: false })] }], settings: { doNoMission: true }, submission: { status: 502 }, freshTasks: () => [quiz('1', { job: false, isPassed: true })] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
 
 test('platform task confirmation accepts the legacy work ID field without guessing by title', async () => {
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { jobid: '', property: { _jobid: 'work-1', name: '同名测验' } })] }],
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1', { jobid: '', property: { _jobid: 'work-1', name: '同名测验' } })] }], submission: { status: 502 },
         freshTasks: () => [quiz('1', { jobid: '', property: { workid: '1', name: '标题已变更' }, isPassed: true })],
     });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0);
 });
 
 for (const statusStr of ['已完成', '待批阅', '已提交', '已批阅']) test('submitted quiz statistics confirm completion when the task card and chapter counter stay stale: ' + statusStr, async () => {
-    const f = fixture({ statistics: state => state.submitted ? [{ workId: '1', chapterId: '1', statusStr }] : [] });
+    const f = fixture({ submission: { status: 502 }, statistics: state => state.submitted ? [{ workId: '1', chapterId: '1', statusStr }] : [] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
 });
 
@@ -227,41 +238,30 @@ for (const record of [
     { workId: '1', chapterId: '2', statusStr: '已完成' },
     { workId: '1', chapterId: '1', courseId: '999', statusStr: '已完成' },
 ]) test('drafts, incomplete states and records from another quiz cannot confirm completion: ' + JSON.stringify(record), async () => {
-    const f = fixture({ statistics: () => [record] }); const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 1);
+    const f = fixture({ settings: { autoSubmit: false }, statistics: () => [record] }); const summary = await f.run();
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 1);
 });
 
 test('task state still confirms completion when statistics are unavailable', async () => {
-    const f = fixture({ statisticsError: new Error('offline'), freshTasks: () => [quiz('1', { isPassed: 'true' })] });
+    const f = fixture({ submission: { status: 502 }, statisticsError: new Error('offline'), freshTasks: () => [quiz('1', { isPassed: 'true' })] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.failed, 0);
 });
 
-test('read-only refresh after traversal updates chapter counts and resolves the original pending log', async () => {
-    const f = fixture({ statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '待批阅' }] : [] });
-    assert.equal((await f.run()).pending, 1);
-    const original = f.state.events.find(event => event.type === 'log' && /章节测验已请求提交/.test(event.message));
+test('read-only refresh after traversal recognizes a later manual submission and updates its log', async () => {
+    const f = fixture({ settings: { autoSubmit: false }, statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '待批阅' }] : [] });
+    assert.equal((await f.run()).skipped, 1);
+    const original = f.state.events.find(event => event.type === 'log' && /尚未提交/.test(event.message));
     f.state.completedLater = true;
     const summary = await f.runner.refresh();
-    assert.equal(summary.pending, 0); assert.equal(summary.confirmed, 1);
-    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 1);
+    assert.equal(summary.skipped, 0); assert.equal(summary.confirmed, 1);
+    assert.equal(last(f.state, 'counts').unconfirmed, 0); assert.equal(f.state.submitted, 0); assert.equal(f.state.saved, 1);
     const completion = f.state.events.find(event => event.type === 'log' && event.tone === 'success' && event.key === original.key);
     assert.ok(original.key); assert.ok(completion);
 });
 
-test('post-traversal monitoring catches a later platform confirmation without executing a quiz again', async () => {
-    const f = fixture({ statistics: state => state.monitorWaited ? [{ workId: '1', chapterId: '1', statusStr: '已完成' }] : [],
-        onWait: (milliseconds, state) => { if (milliseconds === 15000) state.monitorWaited = true; },
-    });
-    await f.run();
-    assert.equal((await f.runner.watch({ intervalMs: 15000, maxAttempts: 3 })).pending, 0);
-    assert.equal(f.state.answered, 1); assert.equal(f.state.submitted, 1);
-});
-
-test('post-traversal monitoring is bounded and remains cancellable', async () => {
-    const f = fixture(); await f.run();
-    assert.equal((await f.runner.watch({ intervalMs: 15000, maxAttempts: 2 })).pending, 1);
-    assert.equal(f.state.waits.filter(ms => ms === 15000).length, 2);
+test('read-only refresh remains cancellable after traversal', async () => {
+    const f = fixture({ settings: { autoSubmit: false } }); await f.run();
     f.state.controller.abort();
     const requests = f.state.requests.length;
     await assert.rejects(f.runner.refresh(), { name: 'AbortError' });
@@ -269,26 +269,26 @@ test('post-traversal monitoring is bounded and remains cancellable', async () =>
 });
 
 test('a failing catalog refresh cannot block valid completion evidence from quiz statistics', async () => {
-    const f = fixture({ catalogError: new Error('offline'), statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '已完成' }] : [] });
+    const f = fixture({ settings: { autoSubmit: false }, catalogError: new Error('offline'), statistics: state => state.completedLater ? [{ workId: '1', chapterId: '1', statusStr: '已完成' }] : [] });
     await f.run(); f.state.completedLater = true;
-    assert.equal((await f.runner.refresh()).pending, 0);
+    assert.equal((await f.runner.refresh()).confirmed, 1);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
 
 test('chapter-only statistics can confirm a uniquely identified quiz after the whole chapter was scanned', async () => {
-    const f = fixture({ statistics: state => state.submitted ? [{ chapterId: '1', statusStr: '待批阅' }] : [] });
+    const f = fixture({ settings: { autoSubmit: false }, statistics: state => state.saved ? [{ chapterId: '1', statusStr: '待批阅' }] : [] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 1); assert.equal(summary.pending, 0);
+    assert.equal(summary.confirmed, 1); assert.equal(summary.skipped, 0);
     assert.equal(last(f.state, 'counts').unconfirmed, 0);
 });
 
 test('chapter-only statistics never guess between multiple quizzes in one chapter', async () => {
-    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1'), quiz('2')] }], statistics: () => [{ chapterId: '1', statusStr: '已完成' }] });
+    const f = fixture({ chapters: [{ id: '1', tasks: [quiz('1'), quiz('2')] }], settings: { autoSubmit: false }, statistics: () => [{ chapterId: '1', statusStr: '已完成' }] });
     const summary = await f.run();
-    assert.equal(summary.confirmed, 0); assert.equal(summary.pending, 2);
+    assert.equal(summary.confirmed, 0); assert.equal(summary.skipped, 2);
 });
 
-test('conflicting status records for the same quiz remain pending', async () => {
-    const f = fixture({ statistics: () => [{ workId: '1', chapterId: '1', statusStr: '已完成' }, { workId: '1', chapterId: '1', statusStr: '未提交' }] });
-    assert.equal((await f.run()).pending, 1);
+test('conflicting status records for the same quiz do not confirm completion', async () => {
+    const f = fixture({ settings: { autoSubmit: false }, statistics: () => [{ workId: '1', chapterId: '1', statusStr: '已完成' }, { workId: '1', chapterId: '1', statusStr: '未提交' }] });
+    assert.equal((await f.run()).skipped, 1);
 });

@@ -231,7 +231,6 @@ async function bootstrap({ restored = false } = {}) {
                 const emit = event => {
                     if (controller.signal.aborted) return;
                     if (event.type === 'log') surface.log(event.message, event.tone, { key: event.key });
-                    if (event.type === 'phase') surface.setPhase(event.phase);
                     if (event.type === 'progress') surface.setProgress(event.percent);
                     if (event.type === 'remaining') surface.setRemaining(event.seconds);
                     if (event.type === 'counts') surface.setCounts(event);
@@ -244,9 +243,8 @@ async function bootstrap({ restored = false } = {}) {
                 };
                 await activity.runExclusive(async () => {
                     const runner = createCourseRunner({ context, transport, settings, bank, questions, emit, prepareVideoSession: course => prepareVideoSession(document, course) });
-                    const summary = await runner.run({ challenge, signal: controller.signal });
+                    await runner.run({ challenge, signal: controller.signal });
                     lastRunner = runner; lastController = controller;
-                    if (summary?.pending) await runner.watch?.();
                 });
             } catch (error) {
                 if (controller.signal.aborted || error.name === 'AbortError') { lastRunner = null; surface.log('任务已停止，可重新开始。'); }
@@ -264,7 +262,7 @@ async function bootstrap({ restored = false } = {}) {
             if (!lastRunner?.refresh) { surface.log('请先运行课程任务，再刷新本轮进度。'); return; }
             const controller = lastController;
             activeController = controller;
-            try { await lastRunner.refresh(); surface.log('已重新核验本轮课程进度。'); }
+            try { await lastRunner.refresh(); surface.log('已刷新本轮课程进度。'); }
             finally { if (activeController === controller) activeController = null; }
         } });
         const installedVersion = typeof GM_info === 'object' ? GM_info?.script?.version : '';
