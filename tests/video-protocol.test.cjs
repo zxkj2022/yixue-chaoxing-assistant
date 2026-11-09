@@ -61,9 +61,9 @@ test('a one-second segment still waits for a full platform heartbeat and its est
     f.env.wait = async ms => { assert.equal(ms, 60000); now += 10000; tick(); assert.equal(f.remaining.at(-1), 50); };
     await assert.rejects(runVideo(f.task, f.env), /平台未确认/); assert.equal(timers, 0);
 });
-test('course engine emits neutral skip logs for disabled or non-task content', async () => {
-    const events = [], origin = 'https://mooc1.chaoxing.com';
-    const runner = createCourseRunner({ context: { origin, courseId: '101', classId: '202' }, settings: { get: () => false }, emit: event => events.push(event), wait: async () => {},
+test('course engine waits three seconds after neutral skips for disabled or non-task content', async () => {
+    const events = [], waits = [], origin = 'https://mooc1.chaoxing.com';
+    const runner = createCourseRunner({ context: { origin, courseId: '101', classId: '202' }, settings: { get: () => false }, emit: event => events.push(event), wait: async ms => waits.push(ms),
         transport: { request: async details => {
             const url = new URL(details.url);
             let responseText = '<div id="cur1"><span class="posCatalog_name">课程一</span><span class="jobUnfinishCount">1</span></div>';
@@ -74,4 +74,5 @@ test('course engine emits neutral skip logs for disabled or non-task content', a
     const summary = await runner.run(); assert.equal(summary.skipped, 2);
     const skips = events.filter(e => e.type === 'log' && /已跳过/.test(e.message));
     assert.ok(skips.length >= 2); assert.ok(skips.every(e => e.tone === 'skipped'));
+    assert.deepEqual(waits.filter(ms => ms !== 1500), [3000, 3000]);
 });

@@ -53,7 +53,7 @@ function createCourseRunner({ context, transport, settings, bank, questions, emi
         const cooldown = async (queue, failed = false) => {
             if (failed) failures++; else failures = 0;
             if (!queue.length) return;
-            const milliseconds = failed ? Math.min(60000, 10000 * 2 ** Math.min(failures - 1, 3)) : 5000;
+            const milliseconds = failed ? Math.min(60000, 10000 * 2 ** Math.min(failures - 1, 3)) : 3000;
             log((failed ? '任务异常' : '任务已跳过') + '，等待 ' + milliseconds / 1000 + ' 秒后继续。', failed ? 'warning' : 'skipped');
             await wait(milliseconds, signal);
             checkSignal();

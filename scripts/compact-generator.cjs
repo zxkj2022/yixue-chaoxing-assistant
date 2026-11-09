@@ -1,10 +1,9 @@
 'use strict';
-module.exports = () => ({
+module.exports = (_, { compact = true } = {}) => ({
     manipulateOptions(options) {
-        options.comments = false;
-        options.compact = true;
-        options.minified = true;
+        const formatting = { comments: !compact, compact, minified: compact };
         options.sourceMaps = false;
-        options.generatorOpts = { ...options.generatorOpts, comments: false, compact: true, minified: true };
+        Object.assign(options, formatting);
+        options.generatorOpts = { ...options.generatorOpts, ...formatting };
     },
 });

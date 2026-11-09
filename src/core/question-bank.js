@@ -1,6 +1,10 @@
 'use strict';
-const { abortError } = require('./primitives');
+const { abortError, delay } = require('./primitives');
 const { version: clientVersion } = require('../metadata.json');
+const SEARCH_TIMEOUT_MS = 150000;
+const AI_SEARCH_TIMEOUT_MS = 180000;
+const SEARCH_RETRY_DELAY_MS = 5000;
+const SEARCH_RETRY_TIMEOUT_MS = 30000;
 // Standalone transport: the page code below consumes a normalized answer string.
 function createQuestionBankClient({ request, getValue, setValue, toText = value => String(value ?? ''), now = () => Date.now() }) {
     const defaultBase = 'https://api.sanzwk.com';
@@ -282,7 +286,7 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         }).finally(() => { if (balanceFlight === flight) { balanceFlight = null; notifyBalance(); } }).then(balanceState);
         return flight.promise;
     };
-    const search = async (input, { signal } = {}) => {
+    const search = async (input, { signal, onTimeoutRetry } = {}) => {
         if (signal?.aborted) throw abortError();
         if (blocked) return blocked;
         const token = getToken();
@@ -310,9 +314,23 @@ function createQuestionBankClient({ request, getValue, setValue, toText = value 
         const idempotencyKey = pending[identity] || uuid();
         pending[identity] = idempotencyKey;
         setValue(pendingKey, pending);
-        const response = await jsonRequest('/api/v1/search', { method: 'POST', body: query, token, idempotencyKey, signal });
-        if (response.aborted || signal?.aborted) throw abortError();
-        if (base() !== origin || getToken() !== token || getValue('yixueTokenRevision', '') !== revision) {
+        const sameAccount = () => base() === origin && getToken() === token && getValue('yixueTokenRevision', '') === revision;
+        const sendSearch = async timeout => {
+            const response = await jsonRequest('/api/v1/search', { method: 'POST', body: query, token, idempotencyKey, signal, timeout });
+            if (response.aborted || signal?.aborted) throw abortError();
+            return response;
+        };
+        let response = await sendSearch(query.use_ai ? AI_SEARCH_TIMEOUT_MS : SEARCH_TIMEOUT_MS);
+        if (response.reason === 'timeout' && sameAccount()) {
+            onTimeoutRetry?.(SEARCH_RETRY_DELAY_MS);
+            await delay(SEARCH_RETRY_DELAY_MS, signal);
+            if (sameAccount()) {
+                if (blocked) return blocked;
+                if (getValue(pendingKey, {})[identity] !== idempotencyKey) return failure('原请求的状态已有更新，请核对现有查询结果。');
+                response = await sendSearch(SEARCH_RETRY_TIMEOUT_MS);
+            }
+        }
+        if (!sameAccount()) {
             return failure('题库账户已更换，已忽略旧账户的查询结果；请重新启动查询。', true);
         }
         const body = response.body || {};

@@ -25,7 +25,7 @@ for (const compact of [false, true]) test('distribution metadata rewrite preserv
 
 let browser, distributed;
 before(async () => {
-    distributed = rewriteDistributionMetadata(bundle({ compact: true }));
+    distributed = rewriteDistributionMetadata(bundle());
     browser = await chromium.launch({ channel: 'chrome', headless: true });
 });
 after(async () => { await browser?.close(); });

@@ -139,13 +139,84 @@ for (const code of ['NOT_FOUND', 'UPSTREAM_ERROR', 'ALREADY_DELIVERED', 'INTERRU
     assert.equal(result.code, 0); assert.equal(result.fatal, false);
     assert.equal(Object.keys(f.values.get('yixuePendingSearches')).length, 0);
 });
-for (const response of [{ status: 409 }, { status: 526 }, { raw: '{broken' }, { finalUrl: 'https://untrusted.example/' }, { event: 'onerror' }, { event: 'ontimeout' }, { event: 'onabort' }, { throw: true }]) test(`uncertain transport result retains the request key: ${JSON.stringify(response)}`, async () => {
+for (const response of [{ status: 409 }, { status: 526 }, { raw: '{broken' }, { finalUrl: 'https://untrusted.example/' }, { event: 'onerror' }, { event: 'onabort' }, { throw: true }]) test(`uncertain transport result retains the request key: ${JSON.stringify(response)}`, async () => {
     const f = fixture([response, {}]);
     assert.equal((await f.bank.search(query)).code, 0);
     assert.equal((await f.bank.search(query)).code, 1);
     const searches = f.requests.filter(request => request.method === 'POST');
     assert.equal(searches[0].headers['Idempotency-Key'], searches[1].headers['Idempotency-Key']);
 });
+test('an AI search gets a longer response window and retries a timeout once with the same request', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture([null, { body: answer }]);
+    const waits = [];
+    const pending = f.bank.search({ ...query, use_ai: true }, { onTimeoutRetry: ms => waits.push(ms) });
+    assert.equal(f.requests[0].timeout, 180000);
+    t.mock.timers.tick(180000);
+    await new Promise(setImmediate);
+    assert.deepEqual(waits, [5000]);
+    t.mock.timers.tick(4999);
+    assert.equal(f.requests.length, 1);
+    t.mock.timers.tick(1);
+    assert.equal((await pending).data, '甲');
+    assert.equal(f.requests.length, 2);
+    const [first, retry] = f.requests;
+    assert.equal(retry.timeout, 30000);
+    assert.equal(first.url, retry.url);
+    assert.deepEqual(first.headers, retry.headers);
+    assert.equal(first.data, retry.data);
+});
+
+test('a second search timeout returns the error and keeps the key for manual retry', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture([{ event: 'ontimeout' }, { event: 'ontimeout' }, { body: answer }]);
+    const pending = f.bank.search(query);
+    assert.equal(f.requests[0].timeout, 150000);
+    await new Promise(setImmediate);
+    t.mock.timers.tick(5000);
+    assert.match((await pending).msg, /超时/);
+    assert.equal(f.requests.length, 2);
+    assert.equal(Object.keys(f.values.get('yixuePendingSearches')).length, 1);
+    assert.equal((await f.bank.search(query)).data, '甲');
+    assert.equal(new Set(f.requests.map(request => request.headers['Idempotency-Key'])).size, 1);
+});
+
+test('stopping during a search timeout wait cancels the retry and keeps the pending key', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture([{ event: 'ontimeout' }]);
+    const controller = new AbortController();
+    const pending = f.bank.search(query, { signal: controller.signal });
+    const stopped = assert.rejects(pending, { name: 'AbortError' });
+    await new Promise(setImmediate);
+    controller.abort();
+    await stopped;
+    t.mock.timers.tick(5000);
+    assert.equal(f.requests.length, 1);
+    assert.equal(Object.keys(f.values.get('yixuePendingSearches')).length, 1);
+});
+
+test('a search timeout does not retry with credentials from a replaced account', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture([{ event: 'ontimeout' }]);
+    const pending = f.bank.search(query);
+    await new Promise(setImmediate);
+    f.bank.setToken(nextToken);
+    t.mock.timers.tick(5000);
+    assert.equal((await pending).fatal, true);
+    assert.equal(f.requests.length, 1);
+});
+
+test('a search timeout does not retry a request already resolved by another lookup', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture([{ event: 'ontimeout' }, { body: answer }]);
+    const pending = f.bank.search(query);
+    await new Promise(setImmediate);
+    assert.equal((await f.bank.search(query)).data, '甲');
+    t.mock.timers.tick(5000);
+    assert.match((await pending).msg, /查询结果/);
+    assert.equal(f.requests.length, 2);
+});
+
 test('validation errors, protocol mismatches and account replacement cannot deliver stale answers', async () => {
     const f = fixture([{ status: 422 }, { body: { ...answer, protocol_version: '2' } }, null]);
     assert.match((await f.bank.search(query)).msg, /校验/);

@@ -85,7 +85,12 @@ function createQuestionWorkflow({ bank, settings, transport, unsafeWindow, onLog
             let response;
             try {
                 const ai = useAi ?? settings?.get?.('doAI', true) ?? true;
-                response = await bank.search({ title: question.title, options: question.options.slice(), type: isBooleanChoice(question) ? 'judge' : question.type, use_ai: ai === true }, { signal });
+                response = await bank.search({
+                    title: question.title, options: question.options.slice(), type: isBooleanChoice(question) ? 'judge' : question.type, use_ai: ai === true,
+                }, {
+                    signal,
+                    onTimeoutRetry: ms => log('题目 ' + question.id + '：题库查询超时，' + ms / 1000 + ' 秒后重试本题，沿用原请求标识。'),
+                });
                 const queryFailed = Number(response?.code) !== 1 && response?.reason !== 'not-found';
                 queryFailures = queryFailed ? queryFailures + 1 : 0;
                 queryDelay = queryFailed ? Math.min(60000, 5000 * 2 ** (queryFailures - 1)) : 2000;
